@@ -3,6 +3,8 @@ import io
 import json
 import math
 import os
+import sys
+from pathlib import Path
 
 import click
 import numpy as np
@@ -11,9 +13,9 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, make_response, request, send_file, send_from_directory
 from tqdm import tqdm
 
-from .models import BaseModel, TransformerModel, as_numpy, models
-from .pdf import get_pdf_content
-from .util import (
+from models import BaseModel, TransformerModel, as_numpy, models
+from pdf import get_pdf_content
+from util import (
     HASH_LENGTH,
     file_md5,
     get_annoy_filename,
@@ -30,6 +32,7 @@ from .util import (
     write_annoy_db,
     write_embedding,
 )
+from PyQt5.QtWidgets import QApplication, QFileDialog
 
 VERSION = pkg_resources.require("semantra")[0].version
 DEFAULT_ENCODING = "utf-8"
@@ -273,9 +276,9 @@ def process(
                         # Call .cpu if embedding_results contains it
                         if hasattr(embedding_results, "cpu"):
                             embedding_results = embedding_results.cpu()
-                        embeddings[
-                            embedding_index : embedding_index + len(pool)
-                        ] = embedding_results
+                        embeddings[embedding_index : embedding_index + len(pool)] = (
+                            embedding_results
+                        )
                         for embedding in embedding_results:
                             write_embedding(f, embedding, num_dimensions)
                         embedding_index += len(pool)
@@ -344,6 +347,18 @@ def process_windows(windows: str) -> "list[tuple[int, int, int]]":
             yield int(size), int(offset), int(rewind)
         else:
             yield int(window), 0, 0
+
+
+def ask_for_pdf_file():
+    _ = QApplication(sys.argv)
+    pdf_path, _ = QFileDialog.getOpenFileName(
+        None, "Select a PDF file", "", "PDF Files (*.pdf)"
+    )
+
+    if not pdf_path:
+        print("Error: No file selected.")
+        sys.exit(1)
+    return (os.path.relpath(pdf_path),)
 
 
 @click.command()
@@ -526,6 +541,18 @@ def process_windows(windows: str) -> "list[tuple[int, int, int]]":
     default=None,
     help="Directory to store semantra files in",
 )
+@click.option(
+    "--search",
+    type=str,
+    default=None,
+    help="Search directly and either print the results, or save to a file using --search <QUERY> --save-search-to <PATH>",
+)
+@click.option(
+    "--save-search-to",
+    type=click.Path(exists=False, writable=True),
+    default=None,
+    help="Where to save the results of the direct search using --search <QUERY>",
+)
 def main(
     filename,
     windows="128_0_16",
@@ -556,6 +583,8 @@ def main(
     list_models=False,
     show_semantra_dir=False,
     semantra_dir=None,  # auto
+    search=None,
+    save_search_to=None,
 ):
     if version:
         print(VERSION)
@@ -572,13 +601,19 @@ def main(
     if show_semantra_dir:
         print(semantra_dir)
         return
-    
+
     # Load environment from Semantra dir
     env_path = os.path.join(semantra_dir, ".env")
     load_dotenv(env_path)
 
     if filename is None or len(filename) == 0:
-        raise click.UsageError("Must provide a filename to process/query")
+        try:
+            filename = ask_for_pdf_file()
+        except Exception as e:
+            print(e)
+            raise click.UsageError("Must provide a filename to process/query")
+
+    print(f"Opening Semantra with {filename}")
 
     processed_windows = list(process_windows(windows))
 
@@ -650,12 +685,13 @@ def main(
         return content
 
     # Start a Flask server
+    print("Starting flask server...")
     app = Flask(__name__)
 
     @app.route("/")
     def base():
         return send_from_directory(
-            pkg_resources.resource_filename("semantra.semantra", "client_public"),
+            pkg_resources.resource_filename("semantra", "client_public"),
             "index.html",
         )
 
@@ -663,7 +699,7 @@ def main(
     @app.route("/<path:path>")
     def home(path):
         return send_from_directory(
-            pkg_resources.resource_filename("semantra.semantra", "client_public"),
+            pkg_resources.resource_filename("semantra", "client_public"),
             path,
         )
 
@@ -684,10 +720,25 @@ def main(
     def query():
         queries = request.json["queries"]
         preferences = request.json["preferences"]
+        return jsonify(query_by_queries_and_preferences(queries, preferences))
+
+    def query_by_search_term(search_term: str):
+        queries = [
+            {
+                "query": search_term,
+                "weight": 1,
+            }
+        ]
+        preferences = []  # Since this is a fresh search
+        return query_by_queries_and_preferences(queries, preferences)
+
+    def query_by_queries_and_preferences(queries, preferences):
         if svm:
-            return querysvm()
+            svm_results = querysvm_by_queries_and_preferences(queries, preferences)
+            return svm_results
         if annoy:
-            return queryann()
+            ann_results = queryann_by_queries_and_preferences(queries, preferences)
+            return ann_results
 
         # Get combined query and preference embedding
         embedding = model.embed_queries_and_preferences(queries, preferences, documents)
@@ -721,7 +772,9 @@ def main(
                     }
                 )
             results.append([doc.filename, sub_results])
-        return jsonify(sort_results(results, True))
+
+        response = sort_results(results, True)
+        return response
 
     @app.route("/api/querysvm", methods=["POST"])
     def querysvm():
@@ -729,7 +782,9 @@ def main(
 
         queries = request.json["queries"]
         preferences = request.json["preferences"]
+        return jsonify(querysvm_by_queries_and_preferences(queries, preferences))
 
+    def querysvm_by_queries_and_preferences(queries, preferences):
         # Get combined query and preference embedding
         embedding = model.embed_queries_and_preferences(queries, preferences, documents)
         results = []
@@ -774,12 +829,15 @@ def main(
                 )
             results.append([doc.filename, sub_results])
 
-        return jsonify(sort_results(results, True))
+        return sort_results(results, True)
 
     @app.route("/api/queryann", methods=["POST"])
     def queryann():
         queries = request.json["queries"]
         preferences = request.json["preferences"]
+        return jsonify(query_by_queries_and_preferences(queries, preferences))
+
+    def queryann_by_queries_and_preferences(queries, preferences):
 
         # Get combined query and preference embedding
         embedding = model.embed_queries_and_preferences(queries, preferences, documents)
@@ -808,7 +866,7 @@ def main(
                     }
                 )
             results.append([doc.filename, sub_results])
-        return jsonify(sort_results(results, True))
+        return sort_results(results, True)
 
     @app.route("/api/explain", methods=["POST"])
     def explain():
@@ -930,18 +988,40 @@ def main(
         filename = request.args.get("filename")
         return jsonify(documents[filename].text_chunks)
 
+    def save_dict_as_json_to_path(data: dict, path: str):
+        full_path = Path(os.path.abspath(path))
+        extension = os.path.splitext(full_path)[1]
+        json_extension = ".json"
+        is_a_json = extension == json_extension
+        if not is_a_json:
+            raise Exception(f"Can't save json to {full_path} as it is not a json file.")
+        with open(full_path, "a") as json_file:
+            json.dump(data, json_file)
+
+    if search is not None:
+        query_results = query_by_search_term(search)
+        if save_search_to is not None:
+            full_path = Path(os.path.abspath(save_search_to))
+            save_dict_as_json_to_path(query_results, full_path)
+
+        else:
+            print(query_results)
+
     if not no_server:
         try:
             app.run(host=host, port=port)
         except SystemExit as e:
             import sys
-            sys.tracebacklimit=0
+
+            sys.tracebacklimit = 0
             if port == DEFAULT_PORT:
                 raise Exception(
-                    f'Try running again and adding `--port <port>` to the command to specify a different port.'
+                    f"Try running again and adding `--port <port>` to the command to specify a different port."
                 ) from None
             else:
-                raise Exception(f"Try specifying a different port with `--port <port>`.") from None
+                raise Exception(
+                    f"Try specifying a different port with `--port <port>`."
+                ) from None
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createEventDispatcher } from "svelte";
   import type {
     File,
     Preference,
@@ -14,6 +15,12 @@
   export let activeFile: File | null;
   export let unsearched: boolean;
   export let sidebarExpanded = false;
+  
+  const dispatch = createEventDispatcher();
+
+  function exportToJson() {
+    dispatch("exportToJson");
+  }
 
   let filterViewed = false;
   let excerptView = false;
@@ -149,6 +156,13 @@
           Show file view
         {:else}Show exercept view{/if}</button
       >
+      <button
+        class="button save-icon"
+        title="Save results to json"
+        on:click={()=> exportToJson()}
+      >
+      Save search results to a file
+      </button>
     </div>
   </div>
   <div class="flex-1 relative">
@@ -258,6 +272,11 @@
 
   .toggle-view-icon {
     background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIxNiIgZmlsbD0ibm9uZSI+PHBhdGggZmlsbD0iIzAwMCIgZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNLjIgMWgxMHYxSC4zVjFabTEwLjMgOC45aDguNlYxMWgtOC42VjkuOVptLS4yLTdIMi44VjRoNy41VjNabS4yIDguOWg4LjZ2MWgtOC42di0xWm0tLjItN0gyLjhWNmg3LjVWNVptLjIgOC45aDguNnYxaC04LjZ2LTFabS0uMi03SDIuOHYxLjFoNy41di0xWk0xNCA0LjZsLjkgMS0xIC45LTItMi4zLS4zLS41LjUtLjRMMTQgMS42bC44IDEtLjguN0E1IDUgMCAwIDEgMTcgNC42YzEgMSAxLjMgMi4zIDEuMyAzLjhoLTEuM2MwLTEuMy0uMy0yLjItMS0yLjktLjQtLjQtMS0uOC0xLjgtMVptLTggNy4yIDEgMWMtLjktLjItMS41LS41LTEuOS0xLS42LS42LTEtMS42LTEtMi44SDNjMCAxLjQuMyAyLjggMS4zIDMuOEE1IDUgMCAwIDAgNyAxNGwtLjguNy45IDFMOSAxNGwuNC0uNC0uNC0uNS0yLTIuMy0xIC45WiIgY2xpcC1ydWxlPSJldmVub2RkIi8+PC9zdmc+");
+    background-size: 70%;
+  }
+  
+  .save-icon{
+    background-image: url("../download.png");
     background-size: 70%;
   }
 

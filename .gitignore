@@ -1,5 +1,6 @@
 .*
 !.gitignore
+!.gitattributes
 !.vscode
 __pycache__
 *.py[cod]
@@ -11,3 +12,4 @@ build
 client/public/config
 client/public/content
 client/public/models
+src/semantra/client_public

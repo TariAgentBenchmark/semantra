@@ -24,6 +24,7 @@
   let updating = false;
   let unsearched = true;
   let searchResultsElem: SearchResults;
+  let currentSearchTerm = "";
 
   let preferences: { [key: string]: Preference } = {};
 
@@ -77,6 +78,23 @@
   let pdfView: PdfView;
   let searchBar: SearchBar;
 
+  function downloadSearchResult(){
+    const queryObject = {
+      "searchResult": searchResultSet,
+      "preferences" : preferences,
+    }
+    console.log("Huh...");
+
+    const blob = new Blob([JSON.stringify(queryObject)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const download_link = document.createElement("a");
+    download_link.href = url;
+    const firstFileName = searchResultSet.results[0][0].split("/").toReversed()[0]
+    download_link.download = `${currentSearchTerm} - (${firstFileName}).json`;
+    download_link.click();
+    URL.revokeObjectURL(url);
+  }
+  
   export function parseQuery(query: string): ParsedQuery[] {
     // Parse the query
     // e.g. "dog + cat" => [{query: "dog", weight: 1}, {query: "cat", weight: 1}]
@@ -102,12 +120,13 @@
   function scrollSearchResultsToTop() {
     if (searchResultsElem) searchResultsElem.scrollToTop();
   }
-
+  
   async function handleSearch(query: string) {
+    currentSearchTerm = query;
     const preferenceValues = Object.values(preferences)
-      .filter((preference) => preference.weight !== 0)
-      .map((x) => ({ ...x }));
-
+    .filter((preference) => preference.weight !== 0)
+    .map((x) => ({ ...x }));
+  
     // Ignore empty queries
     if (query.trim() === "" && preferenceValues.length === 0) {
       searchResultSet = [];
@@ -242,6 +261,7 @@
       {preferences}
       on:setPreference={(e) => setPreference(e.detail)}
       on:navigate={(e) => jumpToResult(e.detail)}
+      on:exportToJson={(e) => downloadSearchResult()}
       {activeFile}
       {filesByPath}
       {searchResultSet}

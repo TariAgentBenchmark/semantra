@@ -41,6 +41,19 @@ class PDFContent:
             ]
             return [(c, b) for c, b in list(zip(chars, char_boxes))]
 
+    def close(self):
+        """Properly close and release resources"""
+        try:
+            if hasattr(self, 'pdfium') and self.pdfium is not None:
+                self.pdfium.close()
+                self.pdfium = None
+        except Exception as e:
+            print(f"Error closing PDF document: {e}")
+
+    def __del__(self):
+        """Ensure resources are released when object is garbage collected"""
+        self.close()
+
 
 # Page separator character
 LINE_FEED = "\f"

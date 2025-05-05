@@ -28,6 +28,7 @@ export interface SearchResult {
 }
 
 export interface Preference {
+  query: any;
   file: File;
   searchResult: SearchResult;
   weight: -1 | 0 | 1;

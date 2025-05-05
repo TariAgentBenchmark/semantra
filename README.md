@@ -58,13 +58,12 @@ Semantra operates on collections of documents — text or PDF files — stored o
 At its simplest, you can run Semantra over a single document by running:
 
 ```sh
-semantra doc.pdf
+python semantra.py file_name.pdf
 ```
 
 You can run Semantra over multiple documents, too:
-
 ```sh
-semantra report.pdf book.txt
+python semantra.py file_name1.pdf file_name2.txt
 ```
 
 Semantra will take some time to process the input documents. This is a one-time operation per document (subsequent runs over the same document collection will be near instantaneous).
@@ -172,3 +171,46 @@ To build the web app, run `npm run build`. To build the web app in watch mode an
 ## Contributions
 
 The app is still in early stages, but contributions are welcome. Please feel free to submit an issue for any bugs or feature requests.
+
+## What's New
+
+**Starting Semantra Without Input Files**
+Semantra now supports launching without any input files. This allows you to:
+
+-  Start with an empty workspace and upload files later through the web interface
+-  Use the application as a file repository for semantic search
+-  Gradually build your document collection
+
+To start Semantra without input files:
+
+```sh
+python semantra.py
+```
+or if you are in root directory:
+
+```sh
+python src/semantra/semantra.py
+```
+
+**File Upload through Web Interface**
+The web interface now includes a file upload feature that allows you to:
+
+-  Upload PDF and text files directly through the browser
+-  Process files on the fly without restarting the application
+-  Build your document collection incrementally
+
+Look for the "Upload Files" button in the top right corner of the interface.
+
+**File Management Features**
+
+-  File Deletion: Remove files from your workspace directly through the interface
+-  Export Results: Export your search results as JSON or CSV files for further analysis
+-  Better Filter Options: Filter search results by file or by relevance
+
+## Installation Guide ##
+A comprehensive installation guide is now available in the INSTALL_GUIDE.md file. This guide includes:
+
+-  Setup instructions
+-  Troubleshooting
+-  Prerequisites
+-  Instructions for running the application

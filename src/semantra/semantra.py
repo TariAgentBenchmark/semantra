@@ -4,13 +4,19 @@ import json
 import math
 import os
 import sys
+import gc
 from pathlib import Path
-
+from werkzeug.utils import secure_filename
+import tempfile
+import logging
+import atexit
+import signal
 import click
 import numpy as np
 import pkg_resources
 from dotenv import load_dotenv
 from flask import Flask, jsonify, make_response, request, send_file, send_from_directory
+from flask_cors import CORS
 from tqdm import tqdm
 
 from models import BaseModel, TransformerModel, as_numpy, models
@@ -36,10 +42,12 @@ from PyQt5.QtWidgets import QApplication, QFileDialog
 
 VERSION = pkg_resources.require("semantra")[0].version
 DEFAULT_ENCODING = "utf-8"
-DEFAULT_PORT = 8080
+DEFAULT_PORT = 5000
 
 package_directory = os.path.dirname(os.path.abspath(__file__))
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 class Content:
     def __init__(self, rawtext, filename):
@@ -350,7 +358,7 @@ def process_windows(windows: str) -> "list[tuple[int, int, int]]":
 
 
 def ask_for_pdf_file():
-    _ = QApplication(sys.argv)
+    app = QApplication(sys.argv)
     pdf_path, _ = QFileDialog.getOpenFileName(
         None, "Select a PDF file", "", "PDF Files (*.pdf)"
     )
@@ -358,6 +366,7 @@ def ask_for_pdf_file():
     if not pdf_path:
         print("Error: No file selected.")
         sys.exit(1)
+    app.quit()
     return (os.path.relpath(pdf_path),)
 
 
@@ -406,7 +415,7 @@ def ask_for_pdf_file():
 @click.option(
     "--host",
     type=str,
-    default="127.0.0.1",
+    default="0.0.0.0",
     show_default=True,
     help="Host to use for embedding server. Set to 0.0.0.0 to make the server available externally.",
 )
@@ -553,12 +562,21 @@ def ask_for_pdf_file():
     default=None,
     help="Where to save the results of the direct search using --search <QUERY>",
 )
+
+@click.option(
+    "-show-dialog",
+    is_flag=True,
+    default=False,
+    help="Show file dialog to select a file when no files are specified.",
+)
+
+
 def main(
     filename,
     windows="128_0_16",
     no_server=False,
-    port=8080,
-    host="127.0.0.1",
+    port=5000,
+    host="0.0.0.0",
     pool_size=None,
     pool_count=None,
     doc_token_pre=None,
@@ -585,6 +603,7 @@ def main(
     semantra_dir=None,  # auto
     search=None,
     save_search_to=None,
+    show_dialog=False,
 ):
     if version:
         print(VERSION)
@@ -601,19 +620,29 @@ def main(
     if show_semantra_dir:
         print(semantra_dir)
         return
-
     # Load environment from Semantra dir
     env_path = os.path.join(semantra_dir, ".env")
     load_dotenv(env_path)
 
+    # Default to empty files list
     if filename is None or len(filename) == 0:
-        try:
-            filename = ask_for_pdf_file()
-        except Exception as e:
-            print(e)
-            raise click.UsageError("Must provide a filename to process/query")
+        # Show file dialog only if explicitly requested
+        if show_dialog:
+            try:
+                filename = ask_for_pdf_file()
+            except Exception as e:
+                print(e)
+                # Fall back to starting with no files instead of error
+                print("Starting Semantra with no files loaded.")
+                filename = ()
+        else:
+            print("Starting Semantra with no files loaded.")
+            filename = ()  # Empty tuple
 
-    print(f"Opening Semantra with {filename}")
+    if filename and len(filename) > 0:
+        print(f"Opening Semantra with {filename}")
+    else:
+        print("Opening Semantra with no files")
 
     processed_windows = list(process_windows(windows))
 
@@ -684,9 +713,53 @@ def main(
         # Return the now-cached content
         return content
 
+    def cleanup_resources():
+        print("Cleaning up resources before shutdown...")
+        # Force garbage collection first to resolve any circular references
+        gc.collect()
+
+        # Close all document resources
+        for doc_name, doc in list(documents.items()):
+            try:
+                if hasattr(doc, 'content'):
+                    # Handle both PDFContent and Content classes
+                    if hasattr(doc.content, 'close'):
+                        doc.content.close()
+
+                    # Explicitly set pdfium to None to avoid memory leaks
+                    if hasattr(doc.content, 'pdfium'):
+                        try:
+                            if doc.content.pdfium is not None:
+                                doc.content.pdfium.close()
+                        except Exception:
+                            pass
+                        doc.content.pdfium = None
+            except Exception as e:
+                print(f"Error cleaning up document {doc_name}: {e}")
+
+        # Force garbage collection again to clean up any newly dereferenced objects
+        gc.collect()
+        print("Resource cleanup completed")
+
+    # Register the cleanup function to run when Python exits
+    atexit.register(cleanup_resources)
+
+    # Define the signal handler with proper scope for sys
+    def signal_handler(sig, frame):
+        print("\nServer shutting down...")
+        cleanup_resources()
+        # Use os._exit instead of sys.exit to avoid issues with Flask's reloader
+        import os
+        os._exit(0)
+
+    # Register signal handlers where Flask app is created
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     # Start a Flask server
     print("Starting flask server...")
     app = Flask(__name__)
+    CORS(app)
 
     @app.route("/")
     def base():
@@ -704,17 +777,129 @@ def main(
         )
 
     @app.route("/api/files", methods=["GET"])
-    def files():
-        return jsonify(
-            [
+    def api_files():
+        """API endpoint to get a list of all available files"""
+        try:
+            files_list = [
                 {
-                    "basename": doc.base_filename,
+                    "basename": os.path.basename(doc.filename),
                     "filename": doc.filename,
                     "filetype": doc.content.filetype,
                 }
                 for doc in documents.values()
             ]
-        )
+            return jsonify(files_list)
+        except Exception as e:
+            app.logger.error(f"Error in /api/files: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    # Replace or add the /api/upload endpoint in semantra.py
+    @app.route("/api/upload", methods=["POST"])
+    def upload_files():
+        """API endpoint to handle file uploads directly"""
+        if 'files' not in request.files:
+            return jsonify({'error': 'No files in request'}), 400
+
+        files = request.files.getlist('files')
+        if not files or files[0].filename == '':
+            return jsonify({'error': 'No files selected'}), 400
+
+        # List to keep track of processed files
+        processed_files = []
+
+        # Create temporary directory for uploads if needed
+        temp_dir = tempfile.mkdtemp()
+
+        try:
+            for file in files:
+                filename = secure_filename(file.filename)
+                file_path = os.path.join(temp_dir, filename)
+                file.save(file_path)
+
+                try:
+                    app.logger.info(f"Processing file: {filename}")
+                    # Process the file with existing semantra functionality
+                    document = process(
+                        filename=file_path,
+                        semantra_dir=semantra_dir,
+                        model=model,
+                        num_dimensions=model.get_num_dimensions(),
+                        use_annoy=annoy,
+                        num_annoy_trees=num_annoy_trees,
+                        windows=processed_windows,
+                        cost_per_token=cost_per_token,
+                        pool_count=pool_count,
+                        pool_size=pool_size,
+                        force=False,
+                        silent=True,
+                        no_confirm=True,  # Don't ask for confirmation during API uploads
+                        encoding=encoding,
+                    )
+
+                    # Add the file to documents dictionary
+                    documents[file_path] = document
+
+                    processed_files.append({
+                        'basename': filename,
+                        'filename': file_path,
+                        'filetype': document.content.filetype,
+                        'status': 'success'
+                    })
+
+                    app.logger.info(f"Successfully processed file: {filename}")
+
+                except Exception as e:
+                    app.logger.error(f"Error processing file {filename}: {str(e)}")
+                    processed_files.append({
+                        'basename': filename,
+                        'filename': file_path,
+                        'status': 'error',
+                        'error': str(e)
+                    })
+
+            return jsonify({
+                'status': 'success',
+                'processed_files': processed_files
+            })
+
+        except Exception as e:
+            app.logger.error(f"Error in /api/upload: {str(e)}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route("/api/delete", methods=["POST"])
+    def delete_document():
+        try:
+            data = request.json
+            if not data or 'filename' not in data:
+                return jsonify({'error': 'No filename specified'}), 400
+
+            filename = data['filename']
+            logger.info(f"Request to delete document: {filename}")
+
+            # Check if the file exists in our documents dictionary
+            if filename not in documents:
+                return jsonify({'error': 'File not found in index'}), 404
+
+            # Close the PDF document properly
+            document = documents[filename]
+            if hasattr(document, 'content'):
+                if hasattr(document.content, 'close'):
+                    document.content.close()
+                elif hasattr(document.content, 'pdfium') and document.content.pdfium is not None:
+                    document.content.pdfium.close()
+
+            # Remove the document from our documents dictionary
+            del documents[filename]
+            logger.info(f"Successfully deleted document: {filename}")
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Document {filename} deleted successfully'
+            })
+
+        except Exception as e:
+            logger.error(f"Error deleting document: {str(e)}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
 
     @app.route("/api/query", methods=["POST"])
     def query():
@@ -1009,7 +1194,7 @@ def main(
 
     if not no_server:
         try:
-            app.run(host=host, port=port)
+            app.run(host=host, port=port, debug=True)
         except SystemExit as e:
             import sys
 

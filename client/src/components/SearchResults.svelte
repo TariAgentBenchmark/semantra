@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
   import type {
     File,
     Preference,
@@ -15,11 +14,123 @@
   export let activeFile: File | null;
   export let unsearched: boolean;
   export let sidebarExpanded = false;
-  
-  const dispatch = createEventDispatcher();
 
-  function exportToJson() {
-    dispatch("exportToJson");
+  type QueryWeight = {
+    query: string;
+    weight: number;
+  };
+
+  type MatchResult = {
+    text: string;
+    score: number;
+    offset: [number, number];
+    queryWeights: QueryWeight[];
+  };
+
+  type DocumentResult = {
+    document: string;
+    matches: MatchResult[];
+  };
+
+  function exportJSON() {
+    // Create sanitized versions of all objects
+    const sanitizedResults = searchResultSet.results.map(
+      ([filename, results]) => [
+        filename,
+        results.map((result) => ({
+          text: result.text,
+          distance: result.distance,
+          offset: [...result.offset],
+          index: result.index,
+          filename: result.filename,
+          queries: result.queries.map((q) => ({
+            query: q.query,
+            weight: q.weight,
+          })),
+          // Omit any properties that might contain PDF references
+        })),
+      ],
+    );
+
+    const exportData = {
+      searchTerms: getSearchTerms(),
+      results: sanitizedResults,
+      sort: searchResultSet.sort,
+    };
+
+    // Generate and download the JSON file
+    const json = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = generateFileName("json");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  }
+
+  function exportCSV(): void {
+    const searchTerms = getSearchTerms();
+    const rows: string[][] = [];
+
+    if (searchTerms.length > 0) {
+      rows.push(["Search Terms"]);
+      rows.push([searchTerms.join(", ")]);
+      rows.push([]);
+    }
+
+    // Header row
+    rows.push([
+      "Document",
+      "Index",
+      "Passage",
+      "Score",
+      "Offset Start",
+      "Offset End",
+      "Queries (with weights)",
+    ]);
+
+    scoredSearchResultSet.forEach(([filename, results]) => {
+      const file = filesByPath[filename];
+
+      results.forEach((result) => {
+        const queries = result.queries
+          .map((q) => `${q.query} (${q.weight.toFixed(3)})`)
+          .join("; ");
+
+        const preferences = result.preferences?.join("; ") ?? "";
+
+        rows.push([
+          file?.basename ?? filename,
+          result.index.toString(),
+          result.text.trim().replace(/[\n\r]+/g, " "),
+          result.distance.toFixed(3),
+          result.offset?.[0]?.toString() ?? "",
+          result.offset?.[1]?.toString() ?? "",
+          result.preferences?.length
+            ? result.preferences
+                .map((p) => `${p.query} (${p.weight})`)
+                .join("; ")
+            : queries,
+        ]);
+      });
+    });
+
+    const csv = rows
+      .map((row) =>
+        row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
+      )
+      .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = generateFileName("csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
   }
 
   let filterViewed = false;
@@ -55,7 +166,7 @@
       getScore(searchResults),
     ])
     .sort((a, b) =>
-      searchResultSet.sort === "asc" ? a[2] - b[2] : b[2] - a[2]
+      searchResultSet.sort === "asc" ? a[2] - b[2] : b[2] - a[2],
     )
     .filter(([filename]) => {
       if (filterViewed && activeFile != null) {
@@ -70,7 +181,7 @@
     .sort((a, b) =>
       searchResultSet.sort === "asc"
         ? a.distance - b.distance
-        : b.distance - a.distance
+        : b.distance - a.distance,
     )
     .filter((searchResult) => {
       if (filterViewed && activeFile != null) {
@@ -83,6 +194,32 @@
   function handleToggle(e: Event, filename: string) {
     const open = (e.target as HTMLDetailsElement).open;
     filenameDetailClosed[filename] = detailReverse ? open : !open;
+  }
+
+  let showExportMenu = false;
+
+  function getSearchTerms(): string[] {
+    // Get unique search terms from queries
+    return [
+      ...new Set(
+        searchResultSet.results.flatMap(([_, results]) =>
+          results.flatMap((r) => r.queries.map((q) => q.query)),
+        ),
+      ),
+    ];
+  }
+
+  function generateFileName(extension: string): string {
+    const searchTerms = getSearchTerms();
+    const baseFileName =
+      searchTerms.length > 0
+        ? searchTerms[0]
+            .slice(0, 30)
+            .replace(/[^a-z0-9]/gi, "_")
+            .toLowerCase()
+        : `semantra-export-${new Date().toISOString().split("T")[0]}`;
+
+    return `${baseFileName}.${extension}`;
   }
 </script>
 
@@ -156,13 +293,39 @@
           Show file view
         {:else}Show exercept view{/if}</button
       >
-      <button
-        class="button save-icon"
-        title="Save results to json"
-        on:click={()=> exportToJson()}
-      >
-      Save search results to a file
-      </button>
+      <div class="relative inline-block" id="export-dropdown">
+        <button
+          class="button save-icon"
+          title="Export results"
+          on:click|stopPropagation={() => (showExportMenu = !showExportMenu)}
+          >Export results</button
+        >
+        {#if showExportMenu}
+          <div
+            class="absolute right-0 top-full mt-1 py-2 w-48 bg-white rounded-md shadow-xl z-20 border border-black"
+          >
+            <button
+              class="block px-4 py-2 text-sm w-full text-left hover:bg-gray-100"
+              title="Save results to json"
+              on:click={() => {
+                exportJSON();
+                showExportMenu = false;
+              }}
+            >
+              Export as JSON
+            </button>
+            <button
+              class="block px-4 py-2 text-sm w-full text-left hover:bg-gray-100"
+              on:click={() => {
+                exportCSV();
+                showExportMenu = false;
+              }}
+            >
+              Export as CSV
+            </button>
+          </div>
+        {/if}
+      </div>
     </div>
   </div>
   <div class="flex-1 relative">
@@ -175,7 +338,7 @@
         <ul class="-mt-2">
           {#each sortedSearchResults as searchResult}
             {@const file = filesByPath[searchResult.filename]}
-            {#if filterFilename(filenameFilter, file.basename)}
+            {#if file && filterFilename(filenameFilter, file.basename)}
               {#key searchResult}
                 <SearchResultComponent
                   on:navigate
@@ -193,7 +356,7 @@
         <!-- File view -->
         {#each scoredSearchResultSet as [filename, searchResults, score]}
           {@const file = filesByPath[filename]}
-          {#if filterFilename(filenameFilter, file.basename)}
+          {#if file && filterFilename(filenameFilter, file.basename)}
             {#key [filename, searchResults, score]}
               <details
                 open={detailReverse
@@ -204,7 +367,7 @@
                 <summary
                   class="font-mono font-bold cursor-pointer select-none px-2 pt-2 top-0 sticky bg-slate-100"
                 >
-                  {file.basename}
+                  {file ? file.basename : "Unknown file"}
                   <span class="text-xs highlight px-1 rounded"
                     >{score.toFixed(2)}</span
                   >
@@ -274,8 +437,8 @@
     background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIxNiIgZmlsbD0ibm9uZSI+PHBhdGggZmlsbD0iIzAwMCIgZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNLjIgMWgxMHYxSC4zVjFabTEwLjMgOC45aDguNlYxMWgtOC42VjkuOVptLS4yLTdIMi44VjRoNy41VjNabS4yIDguOWg4LjZ2MWgtOC42di0xWm0tLjItN0gyLjhWNmg3LjVWNVptLjIgOC45aDguNnYxaC04LjZ2LTFabS0uMi03SDIuOHYxLjFoNy41di0xWk0xNCA0LjZsLjkgMS0xIC45LTItMi4zLS4zLS41LjUtLjRMMTQgMS42bC44IDEtLjguN0E1IDUgMCAwIDEgMTcgNC42YzEgMSAxLjMgMi4zIDEuMyAzLjhoLTEuM2MwLTEuMy0uMy0yLjItMS0yLjktLjQtLjQtMS0uOC0xLjgtMVptLTggNy4yIDEgMWMtLjktLjItMS41LS41LTEuOS0xLS42LS42LTEtMS42LTEtMi44SDNjMCAxLjQuMyAyLjggMS4zIDMuOEE1IDUgMCAwIDAgNyAxNGwtLjguNy45IDFMOSAxNGwuNC0uNC0uNC0uNS0yLTIuMy0xIC45WiIgY2xpcC1ydWxlPSJldmVub2RkIi8+PC9zdmc+");
     background-size: 70%;
   }
-  
-  .save-icon{
+
+  .save-icon {
     background-image: url("../download.png");
     background-size: 70%;
   }
@@ -292,8 +455,13 @@
   }
 
   .hide {
-    /* Breakpoint only */
-    @apply max-sm:!hidden;
+    display: none;
+  }
+
+  @media (max-width: 640px) {
+    .hide {
+      display: block !important;
+    }
   }
 
   .unsearched {

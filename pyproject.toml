@@ -23,6 +23,8 @@ dependencies = [
   "tqdm>=4.65.0",
   "transformers>=4.27.4",
   "setuptools",
+  "flask-cors>=6.0.1",
+  "pyqt5>=5.15.11",
 ]
 description = "A semantic search CLI tool"
 name = "semantra"

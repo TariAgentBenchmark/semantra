@@ -1,12 +1,13 @@
+import codecs
 import os
 from abc import ABC, abstractmethod
 
 import numpy as np
-import openai
 import tiktoken
 import torch
 from dotenv import load_dotenv
 from transformers import AutoModel, AutoTokenizer
+from openai import OpenAI
 
 load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"))
 
@@ -109,20 +110,40 @@ class OpenAIModel(BaseModel):
         tokenizer_name="cl100k_base",
     ):
         # Check if OpenAI API key is set
-        if "OPENAI_API_KEY" not in os.environ:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
             raise Exception(
                 "OpenAI API key not set. Please set the OPENAI_API_KEY environment variable or create a `.env` file with the key in the current working directory or the Semantra directory, which is revealed by running `semantra --show-semantra-dir`."
             )
         
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        
         # Set custom base URL if provided (for OpenAI-compatible APIs)
         base_url = os.getenv("OPENAI_BASE_URL")
-        if base_url:
-            openai.api_base = base_url
 
-        self.model_name = model_name
-        self.num_dimensions = num_dimensions
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+
+        organization = os.getenv("OPENAI_ORG_ID")
+        if organization:
+            client_kwargs["organization"] = organization
+
+        self.client = OpenAI(**client_kwargs)
+
+        env_model_name = os.getenv("OPENAI_EMBEDDING_MODEL")
+        self.model_name = env_model_name if env_model_name else model_name
+
+        self._default_num_dimensions = num_dimensions
+        env_num_dimensions = os.getenv("OPENAI_EMBEDDING_DIMENSIONS")
+        if env_num_dimensions:
+            try:
+                self._configured_num_dimensions = int(env_num_dimensions)
+            except ValueError as exc:
+                raise ValueError(
+                    "OPENAI_EMBEDDING_DIMENSIONS must be an integer when provided."
+                ) from exc
+        else:
+            self._configured_num_dimensions = None
+        self.num_dimensions = None
         self.tokenizer = tiktoken.get_encoding(tokenizer_name)
 
     def get_config(self):
@@ -133,6 +154,7 @@ class OpenAIModel(BaseModel):
         }
 
     def get_num_dimensions(self) -> int:
+        self._ensure_num_dimensions()
         return self.num_dimensions
 
     def get_tokens(self, text: str):
@@ -142,12 +164,39 @@ class OpenAIModel(BaseModel):
         return len(tokens)
 
     def get_text_chunks(self, _: str, tokens) -> "list[str]":
-        return [self.tokenizer.decode([token]) for token in tokens]
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        return [
+            decoder.decode(
+                self.tokenizer.decode_single_token_bytes(token), final=False
+            )
+            for token in tokens
+        ]
 
     def embed(self, tokens, offsets, _is_query=False) -> "list[list[float]]":
         texts = [tokens[i:j] for i, j in offsets]
-        response = openai.Embedding.create(model=self.model_name, input=texts)
-        return np.array([data["embedding"] for data in response["data"]])
+        response = self.client.embeddings.create(model=self.model_name, input=texts)
+        embeddings = np.array([data.embedding for data in response.data])
+        if self.num_dimensions is None or embeddings.shape[1] != self.num_dimensions:
+            self.num_dimensions = embeddings.shape[1]
+        return embeddings
+
+    def _ensure_num_dimensions(self):
+        if self.num_dimensions is not None:
+            return
+        try:
+            response = self.client.embeddings.create(
+                model=self.model_name, input=[" "]
+            )
+            self.num_dimensions = len(response.data[0].embedding)
+        except Exception as exc:
+            if self._configured_num_dimensions is not None:
+                self.num_dimensions = self._configured_num_dimensions
+                return
+            self.num_dimensions = self._default_num_dimensions
+            raise RuntimeError(
+                "Failed to determine embedding dimensions automatically. "
+                "Provide OPENAI_EMBEDDING_DIMENSIONS to proceed."
+            ) from exc
 
 
 def zero_if_none(x):

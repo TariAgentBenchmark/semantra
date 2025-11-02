@@ -115,6 +115,11 @@ class OpenAIModel(BaseModel):
             )
         
         openai.api_key = os.getenv("OPENAI_API_KEY")
+        
+        # Set custom base URL if provided (for OpenAI-compatible APIs)
+        base_url = os.getenv("OPENAI_BASE_URL")
+        if base_url:
+            openai.api_base = base_url
 
         self.model_name = model_name
         self.num_dimensions = num_dimensions

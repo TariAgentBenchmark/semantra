@@ -3,7 +3,7 @@ export type Offset = [number, number];
 export interface File {
   basename: string;
   filename: string;
-  filetype: "text" | "pdf";
+  filetype: "text" | "pdf" | "spreadsheet";
 }
 
 export interface ParsedQuery {

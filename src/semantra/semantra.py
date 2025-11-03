@@ -19,9 +19,9 @@ from flask import Flask, jsonify, make_response, request, send_file, send_from_d
 from flask_cors import CORS
 from tqdm import tqdm
 
-from models import BaseModel, TransformerModel, as_numpy, models
-from pdf import get_pdf_content
-from util import (
+from .models import BaseModel, TransformerModel, as_numpy, models
+from .pdf import get_pdf_content
+from .util import (
     HASH_LENGTH,
     file_md5,
     get_annoy_filename,
@@ -50,15 +50,41 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 class Content:
-    def __init__(self, rawtext, filename):
+    def __init__(self, rawtext, filename, filetype="text"):
         self.rawtext = rawtext
         self.filename = filename
-        self.filetype = "text"
+        self.filetype = filetype
 
 
 def get_text_content(md5, filename, semantra_dir, force, silent, encoding):
-    if filename.endswith(".pdf"):
+    suffix = Path(filename).suffix.lower()
+
+    if suffix == ".pdf":
         return get_pdf_content(md5, filename, semantra_dir, force, silent)
+
+    if suffix in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        try:
+            from openpyxl import load_workbook
+        except ImportError as exc:
+            raise RuntimeError(
+                "Excel support requires openpyxl. Please install the dependency."
+            ) from exc
+
+        workbook = load_workbook(filename=filename, read_only=True, data_only=True)
+        try:
+            text_lines = []
+            for sheet in workbook.worksheets:
+                text_lines.append(f"# Sheet: {sheet.title}")
+                for row in sheet.iter_rows(values_only=True):
+                    values = [str(cell) for cell in row if cell not in (None, "")]
+                    if values:
+                        text_lines.append("\t".join(values))
+                text_lines.append("")
+            rawtext = "\n".join(text_lines).strip()
+        finally:
+            workbook.close()
+
+        return Content(rawtext, filename, filetype="spreadsheet")
 
     with open(filename, "r", encoding=encoding, errors="ignore") as f:
         rawtext = f.read()

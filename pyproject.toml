@@ -13,6 +13,8 @@ dependencies = [
   "annoy_fixed>=1.16.3",
   "click>=8.1.3",
   "Flask>=2.2.3",
+  "joblib>=1.3.0",
+  "openpyxl>=3.1.0",
   "openai>=1.0.0",
   "Pillow>=9.5.0",
   "pypdfium2>=4.5.0",
@@ -25,6 +27,7 @@ dependencies = [
   "setuptools",
   "flask-cors>=6.0.1",
   "pyqt5>=5.15.11",
+  "docling>=2.60.0",
 ]
 description = "A semantic search CLI tool"
 name = "semantra"

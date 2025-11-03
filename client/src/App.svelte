@@ -30,6 +30,7 @@
   let currentSearchTerm = "";
   let uploading = false;
   let uploadError: string | null = null;
+  let uploadedFilesExpanded = false; // collapse the uploaded files list by default
 
   let preferences: { [key: string]: Preference } = {};
   $: activeFile =
@@ -258,6 +259,11 @@
     }
   }
 
+  function focusFile(index: number) {
+    if (index < 0 || index >= files.length) return;
+    activeFileIndex = index;
+  }
+
   function setPreference(preference: Preference) {
     preferences[preferenceKey(preference.file, preference.searchResult)] =
       preference;
@@ -296,12 +302,44 @@
         );
       }
 
-      // Refresh the file list
-      const filesResponse = await fetch(`${API_BASE_URL}/api/files`);
-      if (filesResponse.ok) {
-        files = await filesResponse.json();
-      } else {
-        console.error("Failed to refresh file list:", filesResponse.statusText);
+      const uploadResult = await response.json();
+      const processedFiles = uploadResult.processed_files ?? [];
+      const failedFiles = processedFiles.filter(
+        (file) => file.status !== "success",
+      );
+      const succeededFiles = processedFiles.filter(
+        (file) => file.status === "success",
+      );
+
+      if (failedFiles.length > 0) {
+        uploadError = failedFiles
+          .map((file) =>
+            file.error
+              ? `${file.basename}: ${file.error}`
+              : `${file.basename}: failed`,
+          )
+          .join("; ");
+      }
+
+      if (succeededFiles.length > 0) {
+        // Refresh the file list
+        const filesResponse = await fetch(`${API_BASE_URL}/api/files`);
+        if (filesResponse.ok) {
+          const previousPaths = new Set(files.map((file) => file.filename));
+          const updatedFiles: File[] = await filesResponse.json();
+          files = updatedFiles;
+          const firstNewIndex = updatedFiles.findIndex(
+            (file) => !previousPaths.has(file.filename),
+          );
+          if (firstNewIndex !== -1) {
+            activeFileIndex = firstNewIndex;
+          }
+        } else {
+          console.error(
+            "Failed to refresh file list:",
+            filesResponse.statusText,
+          );
+        }
       }
 
       // Reset file input
@@ -387,7 +425,7 @@
           type="file"
           id="file-upload"
           multiple
-          accept=".pdf,.txt"
+          accept=".pdf,.txt,.html,.xlsx,.xlsm,.xltx,.xltm"
           on:change={handleFileUpload}
           disabled={uploading}
           class="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
@@ -427,6 +465,58 @@
     </div>
   </header>
 
+  {#if files.length > 0}
+    <section class="bg-white border-b border-slate-200 px-8 py-3 max-lg:px-4">
+      <button
+        type="button"
+        class="flex w-full items-center justify-between mb-2 text-xs uppercase tracking-wide text-slate-500"
+        on:click={() => (uploadedFilesExpanded = !uploadedFilesExpanded)}
+        aria-expanded={uploadedFilesExpanded}
+        aria-controls="uploaded-files-list"
+      >
+        <span>已上传文件</span>
+        <span class="flex items-center gap-1">
+          <span>{files.length}</span>
+          <svg
+            class={`h-3 w-3 transition-transform duration-200 ${uploadedFilesExpanded ? "rotate-180" : ""}`}
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </span>
+      </button>
+      <div
+        id="uploaded-files-list"
+        class="max-h-36 overflow-y-auto pr-1"
+        class:hidden={!uploadedFilesExpanded}
+      >
+        <ul class="flex flex-wrap gap-2">
+          {#each files as file, index}
+            <li>
+              <button
+                type="button"
+                class="px-3 py-2 border border-slate-300 rounded text-sm bg-slate-50 hover:bg-slate-100 transition-colors text-left"
+                class:bg-black={index === activeFileIndex}
+                class:text-white={index === activeFileIndex}
+                class:border-black={index === activeFileIndex}
+                on:click={() => focusFile(index)}
+              >
+                <div class="font-medium">{file.basename}</div>
+                <div class="text-xs opacity-70 uppercase tracking-wide">
+                  {file.filetype}
+                </div>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    </section>
+  {/if}
+
   {#if uploadError}
     <div
       class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 m-2"
@@ -457,16 +547,16 @@
           {files}
           onDelete={(filename) => deleteDocument(filename)}
         />
-        {#if activeFile.filetype === "text"}
-          <TextView
-            bind:this={textView}
-            text={text == null ? "Loading..." : text}
-          />
-        {:else if activeFile.filetype === "pdf"}
+        {#if activeFile.filetype === "pdf"}
           <PdfView
             bind:this={pdfView}
             file={activeFile}
             positions={pdfPositions}
+          />
+        {:else}
+          <TextView
+            bind:this={textView}
+            text={text == null ? "Loading..." : text}
           />
         {/if}
       {:else if files.length === 0}

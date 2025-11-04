@@ -133,6 +133,27 @@ When working inside this repository you can drive Semantra through the lightweig
 
 Adjust the paths, model, or backend flags as needed; once `start` reports success, open `http://localhost:5001` to browse your indexed documents.
 
+### Environment configuration
+
+Both `semantra.py` and `main.py` load configuration from a `.env` file if present. Copy `.env.example` to `.env` and fill in the credentials for your embedding provider. An OpenAI-compatible setup might look like this:
+
+```ini
+OPENAI_BASE_URL=https://api.siliconflow.cn/v1
+OPENAI_API_KEY=your_api_key_here
+OPENAI_MODEL_NAME=deepseek-ai/DeepSeek-V3.2-Exp
+OPENAI_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+# OPENAI_EMBEDDING_DIMENSIONS=8192
+OPENAI_RERANKING_MODEL=Qwen/Qwen3-Reranker-8B
+```
+
+- `OPENAI_BASE_URL` / `OPENAI_API_KEY` point at the service providing your embeddings.
+- `OPENAI_MODEL_NAME` is the model used for query embeddings inside the app UI.
+- `OPENAI_EMBEDDING_MODEL` controls indexing-time embeddings when you run `main.py index` or `semantra.py`.
+- Optionally set `OPENAI_EMBEDDING_DIMENSIONS` if the service requires an explicit width.
+- `OPENAI_RERANKING_MODEL` enables the optional reranking pass after retrieval.
+
+Restart commands after editing `.env` so the new values are picked up.
+
 ## Quick concepts
 
 Using a semantic search engine is fundamentally different than an exact text matching algorithm.

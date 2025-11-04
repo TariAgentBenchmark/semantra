@@ -1470,18 +1470,34 @@ def main(
 
         def get_highest_ranked_split(splits):
             nonlocal tokens, embedding
-            split_queries = [exclude_window(start, end) for start, end in splits]
+            split_queries = [
+                exclude_window(start, end) for start, end in splits if start < end
+            ]
+            filtered_pairs = [
+                (split, query)
+                for split, query in zip(splits, split_queries)
+                if isinstance(query, str) and query.strip()
+            ]
+            if not filtered_pairs:
+                return []
             split_windows = np.array(
                 [
                     as_numpy(model.embed_document(split_query))
-                    for split_query in split_queries
+                    for _, split_query in filtered_pairs
                 ]
             )
             distances = split_windows.dot(embedding) / (
                 np.linalg.norm(split_windows, axis=1) * np.linalg.norm(embedding)
             )
             # Return the splits in order of highest to lowest ranked
-            return sorted(zip(splits, distances), key=lambda x: x[1], reverse=False)
+            return sorted(
+                (
+                    (split, distance)
+                    for (split, _), distance in zip(filtered_pairs, distances)
+                ),
+                key=lambda x: x[1],
+                reverse=False,
+            )
 
         def as_tokens(splits):
             nonlocal tokens

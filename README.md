@@ -1,5 +1,8 @@
 # Semantra
 
+后续合作可以添加微信：sunshine-in-the-ruin
+越过平台，无手续费，双赢。请不要在群里说这个事情，如果有后续合作意向直接添加微信。
+
 https://user-images.githubusercontent.com/306095/233867821-601db8b0-19c6-4bae-8e93-720b324dc199.mov
 
 Semantra is a multipurpose tool for semantically searching documents. Query by meaning rather than just by matching text.

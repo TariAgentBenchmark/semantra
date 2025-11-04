@@ -40,6 +40,7 @@ from .util import (
     load_faiss_index,
     read_embeddings_file,
     sort_results,
+    safe_remove,
     write_annoy_db,
     write_faiss_index,
     write_embedding,
@@ -54,6 +55,74 @@ package_directory = os.path.dirname(os.path.abspath(__file__))
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("openai._base_client").setLevel(logging.WARNING)
+
+TXT_CHUNK_TOKEN_LIMIT = int(os.getenv("TXT_CHUNK_TOKEN_LIMIT", "1024"))
+PUNCTUATION_BREAKS = set("。！？!?.,，；;：:、,.；，…—\"'“”‘’（）()《》<>")
+
+
+def _split_by_punctuation(text: str) -> list[str]:
+    segments: list[str] = []
+    current: list[str] = []
+    for char in text:
+        current.append(char)
+        if char in PUNCTUATION_BREAKS:
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+    if current:
+        segment = "".join(current).strip()
+        if segment:
+            segments.append(segment)
+    return segments
+
+
+def _split_long_segment(segment: str, model: BaseModel, limit: int, results: list[str], token_counts: list[int]):
+    clean_segment = segment.strip()
+    if not clean_segment:
+        return
+
+    tokens = model.get_tokens(clean_segment)
+    token_length = model.get_token_length(tokens)
+    if token_length <= limit:
+        results.append(clean_segment)
+        token_counts.append(token_length)
+        return
+
+    punctuation_splits = _split_by_punctuation(clean_segment)
+    if len(punctuation_splits) > 1:
+        for part in punctuation_splits:
+            _split_long_segment(part, model, limit, results, token_counts)
+        return
+
+    length = len(clean_segment)
+    if length <= 1:
+        results.append(clean_segment)
+        token_counts.append(token_length)
+        return
+
+    midpoint = max(1, min(length - 1, length // 2))
+    left = clean_segment[:midpoint]
+    right = clean_segment[midpoint:]
+    _split_long_segment(left, model, limit, results, token_counts)
+    _split_long_segment(right, model, limit, results, token_counts)
+
+
+def chunk_plain_text(text: str, model: BaseModel, limit: int) -> tuple[list[str], list[int]]:
+    chunks: list[str] = []
+    token_counts: list[int] = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        _split_long_segment(line, model, limit, chunks, token_counts)
+
+    return chunks, token_counts
+
 
 def get_primary_query_text(queries):
     for query in queries or []:
@@ -308,6 +377,7 @@ def process(
     suffix = Path(filename).suffix.lower()
     use_annoy = index_backend == "annoy"
     use_faiss = index_backend == "faiss"
+    should_calculate_tokens = True
 
     # Get the md5 and config
     md5 = file_md5(filename)
@@ -321,46 +391,70 @@ def process(
     tokens_filename = os.path.join(semantra_dir, get_tokens_filename(md5, config_hash))
     config_filename = os.path.join(semantra_dir, get_config_filename(md5, config_hash))
 
-    should_calculate_tokens = True
-    if force or not os.path.exists(tokens_filename):
-        # Calculate tokens to get text chunks
+    is_plain_text = suffix == ".txt"
+    text_chunks: list[str]
+    chunk_token_counts: list[int] | None = None
+
+    if is_plain_text:
         content = get_text_content(md5, filename, semantra_dir, force, silent, encoding)
         text = content.rawtext
-        tokens = model.get_tokens(text)
-        should_calculate_tokens = False
-        text_chunks = model.get_text_chunks(text, tokens)
+        text_chunks, chunk_token_counts = chunk_plain_text(
+            text, model, TXT_CHUNK_TOKEN_LIMIT
+        )
         with open(tokens_filename, "w") as f:
             f.write(json.dumps(text_chunks))
+        if chunk_token_counts is None:
+            chunk_token_counts = []
+        num_tokens = sum(chunk_token_counts)
+        window_count = len(windows)
+        if window_count == 0:
+            windows = [(TXT_CHUNK_TOKEN_LIMIT, 0, 0)]
+            window_count = 1
+        line_offsets = [(i, i + 1) for i in range(len(text_chunks))]
+        offsets = [line_offsets[:] for _ in range(window_count)]
+        num_embedding_tokens = num_tokens * window_count
+        breakpoints = None
     else:
-        with open(tokens_filename, "r") as f:
-            text_chunks = json.loads(f.read())
-    num_tokens = len(text_chunks)
+        should_calculate_tokens = True
+        if force or not os.path.exists(tokens_filename):
+            content = get_text_content(
+                md5, filename, semantra_dir, force, silent, encoding
+            )
+            text = content.rawtext
+            tokens = model.get_tokens(text)
+            should_calculate_tokens = False
+            text_chunks = model.get_text_chunks(text, tokens)
+            with open(tokens_filename, "w") as f:
+                f.write(json.dumps(text_chunks))
+        else:
+            with open(tokens_filename, "r") as f:
+                text_chunks = json.loads(f.read())
+        num_tokens = len(text_chunks)
 
-    force_breakpoints = suffix in {".xlsx", ".xlsm", ".xltx", ".xltm"}
-    prefer_breakpoints = suffix in {".txt", ".pdf"}
-    break_chars = ("\n",)
-    if suffix == ".pdf":
-        break_chars = ("\r\n", "\n", "\r", "\f")
-    elif suffix == ".txt":
-        break_chars = ("\r\n", "\n", "\r")
+        force_breakpoints = suffix in {".xlsx", ".xlsm", ".xltx", ".xltm"}
+        prefer_breakpoints = suffix in {".txt", ".pdf"}
+        break_chars = ("\n",)
+        if suffix == ".pdf":
+            break_chars = ("\r\n", "\n", "\r", "\f")
+        elif suffix == ".txt":
+            break_chars = ("\r\n", "\n", "\r")
 
-    breakpoints = (
-        collect_breakpoints(text_chunks, break_chars)
-        if (force_breakpoints or prefer_breakpoints)
-        else None
-    )
+        breakpoints = (
+            collect_breakpoints(text_chunks, break_chars)
+            if (force_breakpoints or prefer_breakpoints)
+            else None
+        )
 
-    # Get embedding offsets based on config parameters
-    (
-        offsets,
-        num_embedding_tokens,
-    ) = get_offsets(
-        num_tokens,
-        windows,
-        breakpoints=breakpoints,
-        prefer_breakpoints=prefer_breakpoints,
-        force_breakpoints=force_breakpoints,
-    )
+        (
+            offsets,
+            num_embedding_tokens,
+        ) = get_offsets(
+            num_tokens,
+            windows,
+            breakpoints=breakpoints,
+            prefer_breakpoints=prefer_breakpoints,
+            force_breakpoints=force_breakpoints,
+        )
 
     # Full config contains additional details
     full_config = {
@@ -440,6 +534,48 @@ def process(
                 ):
                     # Embedding is fully calculated
                     continue
+
+            if is_plain_text:
+                embeddings = np.empty(
+                    (len(sub_offsets), num_dimensions), dtype=np.float32
+                )
+                with open(embeddings_filename, "wb") as f:
+                    for relative_index, offset in enumerate(sub_offsets):
+                        start = offset[0]
+                        chunk_text = text_chunks[start] if start < len(text_chunks) else ""
+                        token_increment = 0
+                        if chunk_token_counts and start < len(chunk_token_counts):
+                            token_increment = chunk_token_counts[start]
+
+                        if not chunk_text:
+                            embeddings[relative_index] = np.zeros(
+                                num_dimensions, dtype=np.float32
+                            )
+                            pbar.update(token_increment)
+                            continue
+
+                        embedding_vec = model.embed_document(chunk_text)
+                        embedding_array = np.asarray(embedding_vec, dtype=np.float32)
+                        embeddings[relative_index] = embedding_array
+                        write_embedding(f, embedding_array, num_dimensions)
+                        pbar.update(token_increment)
+                if embeddings.shape[0] == 0:
+                    safe_remove(annoy_filename)
+                    safe_remove(faiss_filename)
+                    continue
+                if use_annoy:
+                    write_annoy_db(
+                        filename=annoy_filename,
+                        num_dimensions=num_dimensions,
+                        embeddings=embeddings,
+                        num_trees=num_annoy_trees,
+                    )
+                if use_faiss:
+                    write_faiss_index(
+                        filename=faiss_filename,
+                        embeddings=embeddings,
+                    )
+                continue
 
             if should_calculate_tokens:
                 tokens = model.get_tokens(join_text_chunks(text_chunks))

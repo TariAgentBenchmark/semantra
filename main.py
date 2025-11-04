@@ -124,6 +124,12 @@ def cli() -> None:
     show_default=True,
     help="Number of parallel workers powered by joblib (uses threading backend).",
 )
+@click.option(
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Show per-file indexing progress when running with parallel jobs.",
+)
 def index(
     datasets_dir: Path,
     model: str,
@@ -135,6 +141,7 @@ def index(
     num_annoy_trees: int,
     test: bool,
     jobs: int,
+    verbose: bool,
 ) -> None:
     """Pre-compute semantic indexes for every file in datasets."""
     files = resolve_files(datasets_dir)
@@ -227,11 +234,13 @@ def index(
 
             def _task(index_path: tuple[int, Path]) -> None:
                 idx, current_path = index_path
+                if verbose:
+                    with progress_lock:
+                        click.echo(f"[{idx}/{total_files}] Indexing {current_path}...")
+                process_path(current_path, silent=not verbose)
                 with progress_lock:
-                    click.echo(f"[{idx}/{total_files}] Indexing {current_path}...")
-                process_path(current_path, silent=True)
-                with progress_lock:
-                    click.echo(f"[{idx}/{total_files}] Finished {current_path}")
+                    if verbose:
+                        click.echo(f"[{idx}/{total_files}] Finished {current_path}")
                     bar.update(1)
 
             Parallel(n_jobs=jobs, backend="threading")(

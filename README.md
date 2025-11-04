@@ -107,6 +107,32 @@ Finally, text queries can be added and subtracted with plus/minus signs in the q
 
 For a more in-depth walkthrough of the web app, check out the [tutorial](docs/tutorial.md) or [the web app reference](docs/help.md).
 
+## Using the repository helper CLI (`main.py`)
+
+When working inside this repository you can drive Semantra through the lightweight CLI defined in `main.py`. Two common flows:
+
+1. **Index a datasets directory** (OpenAI embeddings, Faiss backend, 10 worker threads, verbose per-file logging):
+
+   ```sh
+   python main.py index \
+     --model openai \
+     --semantra-dir .cache \
+     --datasets-dir /path/to/datasets \
+     --jobs 10 \
+     --verbose
+   ```
+
+2. **Start the UI server against an existing cache on a custom port**:
+
+   ```sh
+   python main.py start \
+     --model openai \
+     --semantra-dir .cache \
+     --port 5001
+   ```
+
+Adjust the paths, model, or backend flags as needed; once `start` reports success, open `http://localhost:5001` to browse your indexed documents.
+
 ## Quick concepts
 
 Using a semantic search engine is fundamentally different than an exact text matching algorithm.

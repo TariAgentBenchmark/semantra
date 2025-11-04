@@ -32,6 +32,10 @@
     matches: MatchResult[];
   };
 
+  function getDisplayScore(result: SearchResult): number {
+    return result.rerank_score ?? result.distance;
+  }
+
   function exportJSON() {
     // Create sanitized versions of all objects
     const sanitizedResults = searchResultSet.results.map(
@@ -39,7 +43,8 @@
         filename,
         results.map((result) => ({
           text: result.text,
-          distance: result.distance,
+          score: getDisplayScore(result),
+          rerank_score: result.rerank_score,
           offset: [...result.offset],
           index: result.index,
           filename: result.filename,
@@ -105,7 +110,7 @@
           file?.basename ?? filename,
           result.index.toString(),
           result.text.trim().replace(/[\n\r]+/g, " "),
-          result.distance.toFixed(3),
+          getDisplayScore(result).toFixed(3),
           result.offset?.[0]?.toString() ?? "",
           result.offset?.[1]?.toString() ?? "",
           result.preferences?.length
@@ -154,7 +159,7 @@
   function getScore(searchResults: SearchResult[]): number {
     let total = 0;
     for (const searchResult of searchResults) {
-      total += searchResult.distance;
+      total += getDisplayScore(searchResult);
     }
     return total / searchResults.length;
   }
@@ -180,8 +185,8 @@
     .flat()
     .sort((a, b) =>
       searchResultSet.sort === "asc"
-        ? a.distance - b.distance
-        : b.distance - a.distance,
+        ? getDisplayScore(a) - getDisplayScore(b)
+        : getDisplayScore(b) - getDisplayScore(a),
     )
     .filter((searchResult) => {
       if (filterViewed && activeFile != null) {

@@ -4,6 +4,8 @@
   const dispatch = createEventDispatcher();
 
   export let preferences: { [key: string]: Preference };
+  export let searchDisabled = false;
+  export let searching = false;
 
   $: preferenceValues = Object.values(preferences).filter(
     (preference) => preference.weight !== 0
@@ -33,6 +35,9 @@
   $: searchOutdated = searchKey !== lastSearchKey;
 
   function search() {
+    if (searchDisabled) {
+      return;
+    }
     dispatch("search", value);
     lastSearchKey = searchKey;
   }
@@ -41,19 +46,52 @@
 <div class="flex flex-1 flex-col">
   <div class="flex items-center relative flex-1">
     <input
-      class="bg-white py-2 px-4 pl-12 font-mono w-full rounded border-black border"
+      class="bg-white py-2 px-4 font-mono w-full rounded border-black border"
       class:bg-yellow-50={searchOutdated}
       class:border-yellow-600={searchOutdated}
       class:border-dashed={searchOutdated}
       placeholder="Search"
       bind:value
       on:keydown={(e) => {
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !searchDisabled) {
           search();
         }
       }}
+      disabled={searchDisabled}
     />
-    <button class="search-button" on:click={search}>Search</button>
+    <button
+      class="search-button"
+      class:search-button--disabled={searchDisabled}
+      class:search-button--busy={searching}
+      on:click={search}
+      disabled={searchDisabled}
+    >
+      {#if searching}
+        <svg
+          class="animate-spin h-4 w-4 mr-2"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <circle
+            class="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            stroke-width="4"
+          ></circle>
+          <path
+            class="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+          ></path>
+        </svg>
+        Searching...
+      {:else}
+        Search
+      {/if}
+    </button>
   </div>
 
   <div
@@ -81,11 +119,29 @@
 
 <style>
   .search-button {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='25' height='24' fill='none'%3E%3Cpath stroke='%23202020' stroke-width='3' d='M10.045 13.424A7.152 7.152 0 1 0 21.003 4.23a7.152 7.152 0 0 0-10.958 9.194Zm0 0-8.984 8.984'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    text-indent: -9999px;
-    width: 25px;
-    position: absolute;
-    left: 10px;
+    margin-left: 0.75rem;
+    padding: 0.5rem 1.25rem;
+    border-radius: 0.25rem;
+    border: 2px solid #000;
+    background-color: #1f2937;
+    color: #fff;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    transition: opacity 0.2s ease, transform 0.1s ease;
+  }
+
+  .search-button:not(:disabled):hover {
+    transform: translateY(-1px);
+    opacity: 0.9;
+  }
+
+  .search-button--disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .search-button--busy svg {
+    margin-left: 0;
   }
 </style>

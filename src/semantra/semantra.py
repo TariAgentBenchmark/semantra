@@ -14,6 +14,7 @@ import signal
 import click
 import numpy as np
 import pkg_resources
+import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, make_response, request, send_file, send_from_directory
 from flask_cors import CORS
@@ -23,6 +24,7 @@ from .models import BaseModel, TransformerModel, as_numpy, models
 from .pdf import get_pdf_content
 from .util import (
     HASH_LENGTH,
+    collect_breakpoints,
     file_md5,
     get_annoy_filename,
     get_config_filename,
@@ -48,6 +50,115 @@ package_directory = os.path.dirname(os.path.abspath(__file__))
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+def get_primary_query_text(queries):
+    for query in queries or []:
+        text = query.get("query")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    return None
+
+
+def get_rerank_settings():
+    model_name = os.getenv("OPENAI_RERANKING_MODEL")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not model_name or not api_key:
+        return None
+
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com")
+    trimmed = base_url.rstrip("/")
+    if trimmed.endswith("/v1"):
+        endpoint = f"{trimmed}/rerank"
+    else:
+        endpoint = f"{trimmed}/v1/rerank"
+
+    return {
+        "endpoint": endpoint,
+        "model": model_name,
+        "api_key": api_key,
+    }
+
+
+def rerank_sub_results(queries, sub_results):
+    if not sub_results:
+        return sub_results
+
+    settings = get_rerank_settings()
+    if settings is None:
+        return sub_results
+
+    query_text = get_primary_query_text(queries)
+    if not query_text:
+        return sub_results
+
+    documents = [item.get("text", "") or "" for item in sub_results]
+    payload = {
+        "model": settings["model"],
+        "query": query_text,
+        "documents": documents,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings['api_key']}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(
+            settings["endpoint"], json=payload, headers=headers, timeout=30
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:  # pragma: no cover - network failures
+        logger.warning("Rerank request failed: %s", exc)
+        return sub_results
+
+    ordering = []
+    scores_by_index = {}
+
+    if isinstance(data, dict):
+        candidates = data.get("data") or data.get("results") or data.get("items")
+        if isinstance(candidates, list):
+            for item in candidates:
+                if not isinstance(item, dict):
+                    continue
+                idx = (
+                    item.get("document")
+                    if isinstance(item.get("document"), int)
+                    else item.get("index")
+                )
+                if idx is None or not isinstance(idx, int):
+                    continue
+                score = (
+                    item.get("score")
+                    if isinstance(item.get("score"), (int, float))
+                    else item.get("relevance_score")
+                )
+                ordering.append(idx)
+                if isinstance(score, (int, float)):
+                    scores_by_index[idx] = float(score)
+
+    if not ordering:
+        return sub_results
+
+    seen = set()
+    reordered = []
+
+    for idx in ordering:
+        if idx < 0 or idx >= len(sub_results) or idx in seen:
+            continue
+        item = sub_results[idx]
+        if idx in scores_by_index:
+            item["rerank_score"] = scores_by_index[idx]
+        reordered.append(item)
+        seen.add(idx)
+
+    # Append any leftover results that were not returned by the reranker
+    for idx, item in enumerate(sub_results):
+        if idx not in seen:
+            reordered.append(item)
+
+    return reordered
+
 
 class Content:
     def __init__(self, rawtext, filename, filetype="text"):
@@ -177,6 +288,8 @@ def process(
     if not os.path.exists(semantra_dir):
         os.makedirs(semantra_dir)
 
+    suffix = Path(filename).suffix.lower()
+
     # Get the md5 and config
     md5 = file_md5(filename)
     base_filename = os.path.basename(filename)
@@ -204,11 +317,31 @@ def process(
             text_chunks = json.loads(f.read())
     num_tokens = len(text_chunks)
 
+    force_breakpoints = suffix in {".xlsx", ".xlsm", ".xltx", ".xltm"}
+    prefer_breakpoints = suffix in {".txt", ".pdf"}
+    break_chars = ("\n",)
+    if suffix == ".pdf":
+        break_chars = ("\r\n", "\n", "\r", "\f")
+    elif suffix == ".txt":
+        break_chars = ("\r\n", "\n", "\r")
+
+    breakpoints = (
+        collect_breakpoints(text_chunks, break_chars)
+        if (force_breakpoints or prefer_breakpoints)
+        else None
+    )
+
     # Get embedding offsets based on config parameters
     (
         offsets,
         num_embedding_tokens,
-    ) = get_offsets(num_tokens, windows)
+    ) = get_offsets(
+        num_tokens,
+        windows,
+        breakpoints=breakpoints,
+        prefer_breakpoints=prefer_breakpoints,
+        force_breakpoints=force_breakpoints,
+    )
 
     # Full config contains additional details
     full_config = {
@@ -242,7 +375,7 @@ def process(
     annoy_filenames = []
     with tqdm(
         total=num_embedding_tokens,
-        desc="Calculating embeddings",
+        desc=f"Embedding {base_filename}",
         leave=False,
         disable=silent,
     ) as pbar:
@@ -420,9 +553,9 @@ def ask_for_pdf_file():
 @click.option(
     "--windows",
     type=str,
-    default="128_0_16",
+    default="1024_0_16",
     show_default=True,
-    help='Embedding windows to extract. A comma-separated list of the format "size[_offset=0][_rewind=0]. A window with size 128, offset 0, and rewind of 16 (128_0_16) will embed the document in chunks of 128 tokens which partially overlap by 16. Only the first window is used for search.',
+    help='Embedding windows to extract. A comma-separated list of the format "size[_offset=0][_rewind=0]. A window with size 1024, offset 0, and rewind of 16 (1024_0_16) will embed the document in chunks of roughly 1024 tokens which partially overlap by 16. Only the first window is used for search.',
 )
 @click.option(
     "--no-server",
@@ -599,7 +732,7 @@ def ask_for_pdf_file():
 
 def main(
     filename,
-    windows="128_0_16",
+    windows="1024_0_16",
     no_server=False,
     port=5000,
     host="0.0.0.0",
@@ -982,6 +1115,7 @@ def main(
                         "preferences": preferences,
                     }
                 )
+            sub_results = rerank_sub_results(queries, sub_results)
             results.append([doc.filename, sub_results])
 
         response = sort_results(results, True)
@@ -1038,6 +1172,7 @@ def main(
                         "preferences": preferences,
                     }
                 )
+            sub_results = rerank_sub_results(queries, sub_results)
             results.append([doc.filename, sub_results])
 
         return sort_results(results, True)
@@ -1076,6 +1211,7 @@ def main(
                         "preferences": preferences,
                     }
                 )
+            sub_results = rerank_sub_results(queries, sub_results)
             results.append([doc.filename, sub_results])
         return sort_results(results, True)
 

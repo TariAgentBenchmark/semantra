@@ -100,6 +100,7 @@
   let textView: TextView;
   let pdfView: PdfView;
   let searchBar: SearchBar;
+  let searchPending = false;
 
   export function parseQuery(query: string): ParsedQuery[] {
     // Parse the query
@@ -128,6 +129,10 @@
   }
 
   async function handleSearch(query: string) {
+    if (searchPending) {
+      return;
+    }
+
     currentSearchTerm = query;
     const preferenceValues = Object.values(preferences)
       .filter((preference) => preference.weight !== 0)
@@ -156,7 +161,7 @@
       1;
     const totalNegativeCount =
       parsedQueries.filter((query) => query.weight < 0).length +
-        preferenceValues.filter((preference) => preference.weight < 0).length ||
+      preferenceValues.filter((preference) => preference.weight < 0).length ||
       1;
     for (const query of parsedQueries) {
       if (query.weight > 0) {
@@ -173,6 +178,7 @@
       }
     }
 
+    searchPending = true;
     try {
       const response = await fetch(`${API_BASE_URL}/api/query`, {
         method: "POST",
@@ -196,6 +202,8 @@
     } catch (error) {
       console.error("Search error:", error);
       uploadError = `Search failed: ${error.message}`;
+    } finally {
+      searchPending = false;
     }
   }
 
@@ -415,6 +423,8 @@
       <SearchBar
         bind:this={searchBar}
         {preferences}
+        searchDisabled={searchPending}
+        searching={searchPending}
         on:setPreference={(e) => setPreference(e.detail)}
         on:search={(e) => handleSearch(e.detail)}
       />

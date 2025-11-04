@@ -95,7 +95,7 @@ def cli() -> None:
 @click.option(
     "--windows",
     type=str,
-    default="128_0_16",
+    default="1024_0_16",
     help="Embedding windows configuration (matches Semantra CLI syntax).",
 )
 @click.option(
@@ -180,7 +180,7 @@ def index(
         f"using model '{model}' (semantra_dir={semantra_dir})."
     )
 
-    def process_path(path: Path) -> None:
+    def process_path(path: Path, silent: bool) -> None:
         document = sem.process(
             filename=str(path),
             semantra_dir=str(semantra_dir),
@@ -193,7 +193,7 @@ def index(
             pool_count=pool_count,
             pool_size=pool_size,
             force=force,
-            silent=True,
+            silent=silent,
             no_confirm=True,
             encoding=encoding,
         )
@@ -207,24 +207,31 @@ def index(
             # Closing is best-effort; ignore failures to avoid masking indexing success.
             pass
 
-    if jobs <= 1 or len(files) == 1:
-        with click.progressbar(files, label="Indexing files") as progress_files:
-            for path in progress_files:
-                process_path(path)
+    total_files = len(files)
+    if jobs <= 1 or total_files == 1:
+        for index, path in enumerate(files, start=1):
+            click.echo(f"[{index}/{total_files}] Indexing {path}...")
+            process_path(path, silent=False)
+            click.echo(f"[{index}/{total_files}] Finished {path}")
     else:
         from joblib import Parallel, delayed
 
         click.echo(f"Using joblib with {jobs} workers.")
         progress_lock = Lock()
-        with click.progressbar(length=len(files), label="Indexing files") as bar:
+        indexed_files = list(enumerate(files, start=1))
+        with click.progressbar(length=total_files, label="Indexing files") as bar:
 
-            def _task(path: Path) -> None:
-                process_path(path)
+            def _task(index_path: tuple[int, Path]) -> None:
+                idx, current_path = index_path
                 with progress_lock:
+                    click.echo(f"[{idx}/{total_files}] Indexing {current_path}...")
+                process_path(current_path, silent=True)
+                with progress_lock:
+                    click.echo(f"[{idx}/{total_files}] Finished {current_path}")
                     bar.update(1)
 
             Parallel(n_jobs=jobs, backend="threading")(
-                delayed(_task)(path) for path in files
+                delayed(_task)(index_path) for index_path in indexed_files
             )
 
     click.echo("Indexing complete.")
@@ -260,7 +267,7 @@ def index(
 @click.option(
     "--windows",
     type=str,
-    default="128_0_16",
+    default="1024_0_16",
     help="Embedding windows configuration (matches Semantra CLI syntax).",
 )
 def start(

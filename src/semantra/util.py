@@ -1,6 +1,7 @@
 import struct
 import hashlib
 import os
+from bisect import bisect_right
 import numpy as np
 
 HASH_LENGTH = 24
@@ -16,6 +17,23 @@ def file_md5(filename):
 
 def join_text_chunks(chunks):
     return "".join(chunks)
+
+
+def collect_breakpoints(chunks, break_chars=("\n",)):
+    """Return token indices that align with preferred break characters."""
+    if not chunks:
+        return []
+
+    breakpoints = set()
+    char_set = tuple(break_chars) if isinstance(break_chars, (list, tuple)) else (break_chars,)
+    last_index = len(chunks)
+
+    for idx, chunk in enumerate(chunks, start=1):
+        if any(char in chunk for char in char_set):
+            if 0 < idx < last_index:
+                breakpoints.add(idx)
+
+    return sorted(breakpoints)
 
 
 # Filenames for generated files
@@ -133,26 +151,83 @@ def read_embeddings_file(embeddings_filename, num_dimensions, capacity):
     return embeddings, num_embeddings
 
 
-def get_offsets(doc_size, windows):
-    num_tokens = 0
+def get_offsets(
+    doc_size,
+    windows,
+    *,
+    breakpoints=None,
+    prefer_breakpoints=False,
+    force_breakpoints=False,
+):
+    if doc_size <= 0:
+        return [[] for _ in windows], 0
+
+    sorted_breakpoints = sorted(
+        bp for bp in (breakpoints or []) if 0 < bp < doc_size
+    )
+
+    def select_end(start, desired_end):
+        """Pick the best chunk end respecting preferred breakpoints."""
+        if not sorted_breakpoints:
+            return desired_end
+
+        if force_breakpoints:
+            idx = bisect_right(sorted_breakpoints, start)
+            if idx < len(sorted_breakpoints):
+                return sorted_breakpoints[idx]
+            return desired_end
+
+        if prefer_breakpoints:
+            idx = bisect_right(sorted_breakpoints, desired_end)
+            while idx > 0:
+                candidate = sorted_breakpoints[idx - 1]
+                if candidate > start:
+                    return candidate
+                idx -= 1
+
+        return desired_end
 
     offsets = []
+    num_tokens = 0
 
     for size, offset, rewind in windows:
         sub_offsets = []
-        x = 0
-        if offset > 0:
-            sub_offsets.append([0, offset])
-            num_tokens += offset
-            x = offset
-        else:
-            x = rewind
+        effective_rewind = 0 if force_breakpoints else max(rewind, 0)
 
-        while x < doc_size:
-            x -= rewind
-            sub_offsets.append([x, min(x + size, doc_size)])
-            num_tokens += min(x + size, doc_size) - x
-            x += size
+        chunk_size = max(size, 1)
+        start = 0
+
+        if offset > 0:
+            initial_end = min(offset, doc_size)
+            initial_end = select_end(start, initial_end)
+            if initial_end > start:
+                sub_offsets.append([start, initial_end])
+                num_tokens += initial_end - start
+                start = max(initial_end - effective_rewind, 0)
+            else:
+                start = 0
+
+        visited_guard = 0
+        while start < doc_size and visited_guard < doc_size + 1:
+            desired_end = min(start + chunk_size, doc_size)
+            end = select_end(start, desired_end)
+
+            if end <= start:
+                end = desired_end
+            if end <= start:
+                end = min(doc_size, start + 1)
+
+            sub_offsets.append([start, end])
+            num_tokens += end - start
+
+            if end >= doc_size:
+                break
+
+            next_start = max(end - effective_rewind, 0)
+            if next_start <= start:
+                next_start = start + 1
+            start = next_start
+            visited_guard += 1
 
         offsets.append(sub_offsets)
 

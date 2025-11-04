@@ -110,7 +110,7 @@ semantra [OPTIONS] [FILENAME(S)]...
 
 - `--model [openai|minilm|mpnet|sgpt|sgpt-1.3B]`: 预设的嵌入模型。有关更多信息，请参阅模型指南（默认：mpnet）
 - `--transformer-model TEXT`: 自定义用于嵌入的 Huggingface Transformer 模型名称（应只指定 `--model` 和 `--transformer-model` 其中一个）。有关更多信息，请参阅模型指南
-- `--windows TEXT`: 要提取嵌入的窗口。格式为 "size[\_offset=0][\_rewind=0] 的逗号分隔列表。size 为 128、offset 为 0、rewind 为 16 的窗口（128_0_16）会把文本分为 128 个 token 长度的文本块，对每个文本块进行嵌入，并且让这些文本块之间重叠 16 个 token，并且只有第一个窗口会被用于搜索。有关更多信息，请参阅[窗口概念](./concept_windows.md)文档（默认：128_0_16）
+- `--windows TEXT`: 要提取嵌入的窗口。格式为 "size[\_offset=0][\_rewind=0] 的逗号分隔列表。size 为 1024、offset 为 0、rewind 为 16 的窗口（1024_0_16）会把文本分为大约 1024 个 token 长度的文本块，对每个文本块进行嵌入，并且让这些文本块之间重叠 16 个 token，并且只有第一个窗口会被用于搜索。有关更多信息，请参阅[窗口概念](./concept_windows.md)文档（默认：1024_0_16）
 - `--encoding`: 用于读取文本文件的编码 [默认: utf-8]
 - `--encoding`：用于读取文本文件的编码（默认：utf-8）
 - `--no-server`：不启动 UI 服务器（只处理）

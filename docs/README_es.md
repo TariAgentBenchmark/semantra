@@ -112,7 +112,7 @@ semantra [OPTIONS] [FILENAME(S)]...
 
 - `--model [openai|minilm|mpnet|sgpt|sgpt-1.3B]`: Modelo preestablecido para incrustar. Consulte [la guía de modelos] (./guide_models.md) para obtener más información (predeterminado: mpnet)
 - `--transformer-model TEXT`: Nombre del modelo de transformador Huggingface personalizado que se usará para incrustar (solo se debe especificar uno de `--model` y `--transformer-model`). Consulte [la guía de modelos](./guide_models.md) para obtener más información.
-- `--windows TEXT`: Ventanas incrustadas para extraer. Una lista separada por comas con el formato "size[\_offset=0][_rewind=0]. Una ventana con tamaño 128, desplazamiento 0 y rebobinado de 16 (128_0_16) incrustará el documento en fragmentos de 128 tokens que se superponen parcialmente por 16. Solo se usa la primera ventana para la búsqueda. Consulte el [documento de concepto de ventanas] (./concept_windows.md) para obtener más información (predeterminado: 128_0_16)
+- `--windows TEXT`: Ventanas incrustadas para extraer. Una lista separada por comas con el formato "size[\_offset=0][_rewind=0]. Una ventana con tamaño 1024, desplazamiento 0 y rebobinado de 16 (1024_0_16) incrustará el documento en fragmentos de aproximadamente 1024 tokens que se superponen parcialmente por 16. Solo se usa la primera ventana para la búsqueda. Consulte el [documento de concepto de ventanas] (./concept_windows.md) para obtener más información (predeterminado: 1024_0_16)
 - `--encoding`: Codificación a usar para leer archivos de texto [predeterminado: utf-8]
 - `--no-server`: No iniciar el servidor de UI (solo el proceso)
 - `--port INTEGER`: Puerto a usar para el servidor integrado (predeterminado: 8080)

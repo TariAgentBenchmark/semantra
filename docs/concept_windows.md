@@ -20,6 +20,6 @@ There are three parameters that control Semantra's windowing process:
 
 ## The default parameters
 
-The default for Semantra is to use a window size of 128 with a rewind factor of 16 and no offset. This has been found anecdotally to be pretty good and work well across a wide range of models.
+The default for Semantra is to use a window size of 1024 with a rewind factor of 16 and no offset. This provides broader context per chunk while maintaining a small overlap for continuity, and you can still tailor the parameters to suit your documents.
 
 Feel free to experiment with other sizes and overlaps depending on your needs.

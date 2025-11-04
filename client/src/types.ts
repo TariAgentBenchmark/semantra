@@ -19,6 +19,7 @@ export type ScoredSearchResult = [string, SearchResult[], number];
 
 export interface SearchResult {
   distance: number;
+  rerank_score?: number;
   text: string;
   offset: [number, number];
   index: number;

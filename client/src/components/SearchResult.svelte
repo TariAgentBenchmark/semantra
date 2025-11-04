@@ -21,6 +21,8 @@
     searchResult,
     weight: 0,
   };
+  $: displayScore =
+    searchResult.rerank_score ?? searchResult.distance ?? 0;
 
   function jumpToResult(file: File, searchResult: SearchResult) {
     dispatch("navigate", { file, searchResult });
@@ -55,12 +57,12 @@
       <div class="font-bold text-base my-2">
         {file.basename}
         <span class="highlight px-1 rounded text-xs"
-          >{searchResult.distance.toFixed(2)}</span
+          >{displayScore.toFixed(2)}</span
         >
       </div>
     {:else}
       <span class="text-xs highlight px-1 rounded"
-        >{searchResult.distance.toFixed(2)}</span
+        >{displayScore.toFixed(2)}</span
       >
     {/if}
     <button

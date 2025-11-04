@@ -123,8 +123,8 @@ semantra [OPTIONS] [FILENAME(S)]...
 - `--query-token-pre TEXT`：添加到 Transformer 模型中每个查询前面的标记（默认：None）
 - `--query-token-post TEXT`：添加到 Transformer 模型中每个查询后面的标记（默认：None）
 - `--num-results INTEGER`：每个文件的查询结果（邻居）数量（默认：10）
-- `--annoy`：使用 Annoy 进行近似 kNN 查询（查询更快，但精度略有损失）；如果为假，则使用精确的穷举 kNN（默认：True）
-- `--num-annoy-trees INTEGER`：用于通过 Annoy 进行近似 kNN 的树的数量（默认：100）
+- `--index-backend [faiss|annoy|exact]`：选择向量索引后端（默认：faiss）
+- `--num-annoy-trees INTEGER`：当选择 `annoy` 后端时使用的树数量（默认：100）
 - `--svm`：使用 SVM 而不是任何类型的 kNN 进行查询（较慢，只适用于对称模型）
 - `--svm-c FLOAT`：SVM 正则化参数；较高的值会更多地惩罚误报（默认：1.0）
 - `--explain-split-count INTEGER`：用于解释查询的给定窗口的分割数量（默认：9）

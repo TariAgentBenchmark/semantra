@@ -29,15 +29,19 @@ from .util import (
     get_annoy_filename,
     get_config_filename,
     get_embeddings_filename,
+    get_faiss_filename,
     get_num_annoy_embeddings,
+    get_num_faiss_embeddings,
     get_num_embeddings,
     get_offsets,
     get_tokens_filename,
     join_text_chunks,
     load_annoy_db,
+    load_faiss_index,
     read_embeddings_file,
     sort_results,
     write_annoy_db,
+    write_faiss_index,
     write_embedding,
 )
 from PyQt5.QtWidgets import QApplication, QFileDialog
@@ -214,8 +218,9 @@ class Document:
         base_filename,
         config,
         embeddings_filenames,
-        use_annoy,
+        vector_backend,
         annoy_filenames,
+        faiss_filenames,
         windows,
         offsets,
         tokens_filename,
@@ -228,8 +233,12 @@ class Document:
         self.base_filename = base_filename
         self.config = config
         self.embeddings_filenames = embeddings_filenames
-        self.use_annoy = use_annoy
         self.annoy_filenames = annoy_filenames
+        self.faiss_filenames = faiss_filenames
+        self.vector_backend = vector_backend
+        self.use_annoy = vector_backend == "annoy"
+        self.use_faiss = vector_backend == "faiss"
+        self._faiss_index = None
         self.windows = windows
         self.offsets = offsets
         self.tokens_filename = tokens_filename
@@ -258,6 +267,14 @@ class Document:
         return load_annoy_db(self.annoy_filenames[0], self.num_dimensions)
 
     @property
+    def faiss_index(self):
+        if not self.use_faiss:
+            raise ValueError("Embeddings are not stored in Faiss index")
+        if self._faiss_index is None:
+            self._faiss_index = load_faiss_index(self.faiss_filenames[0])
+        return self._faiss_index
+
+    @property
     def embeddings(self):
         results, embedding_count = read_embeddings_file(
             self.embeddings_filenames[0],
@@ -273,7 +290,7 @@ def process(
     semantra_dir,
     model,
     num_dimensions,
-    use_annoy,
+    index_backend,
     num_annoy_trees,
     windows,
     cost_per_token,
@@ -289,6 +306,8 @@ def process(
         os.makedirs(semantra_dir)
 
     suffix = Path(filename).suffix.lower()
+    use_annoy = index_backend == "annoy"
+    use_faiss = index_backend == "faiss"
 
     # Get the md5 and config
     md5 = file_md5(filename)
@@ -356,6 +375,8 @@ def process(
         "num_embeddings": len(offsets),
         "num_embedding_tokens": num_embedding_tokens,
         "use_annoy": use_annoy,
+        "use_faiss": use_faiss,
+        "vector_backend": index_backend,
         "num_annoy_trees": num_annoy_trees,
         "semantra_version": VERSION,
     }
@@ -373,6 +394,7 @@ def process(
 
     embeddings_filenames = []
     annoy_filenames = []
+    faiss_filenames = []
     with tqdm(
         total=num_embedding_tokens,
         desc=f"Embedding {base_filename}",
@@ -390,22 +412,31 @@ def process(
                     md5, config_hash, size, offset, rewind, num_annoy_trees
                 ),
             )
+            faiss_filename = os.path.join(
+                semantra_dir,
+                get_faiss_filename(md5, config_hash, size, offset, rewind),
+            )
             embeddings_filenames.append(embeddings_filename)
             annoy_filenames.append(annoy_filename)
+            faiss_filenames.append(faiss_filename)
 
             if os.path.exists(embeddings_filename) and (
-                not use_annoy or os.path.exists(annoy_filename)
+                (not use_annoy or os.path.exists(annoy_filename))
+                and (not use_faiss or os.path.exists(faiss_filename))
             ):
                 num_embeddings = get_num_embeddings(embeddings_filename, num_dimensions)
                 if use_annoy:
                     num_annoy_embeddings = get_num_annoy_embeddings(
                         annoy_filename, num_dimensions
                     )
+                if use_faiss:
+                    num_faiss_embeddings = get_num_faiss_embeddings(faiss_filename)
 
                 if (
                     not force
                     and num_embeddings == len(sub_offsets)
                     and (not use_annoy or num_annoy_embeddings == len(sub_offsets))
+                    and (not use_faiss or num_faiss_embeddings == len(sub_offsets))
                 ):
                     # Embedding is fully calculated
                     continue
@@ -484,6 +515,11 @@ def process(
                     embeddings=embeddings,
                     num_trees=num_annoy_trees,
                 )
+            if use_faiss:
+                write_faiss_index(
+                    filename=faiss_filename,
+                    embeddings=embeddings,
+                )
 
     return Document(
         filename=filename,
@@ -492,8 +528,9 @@ def process(
         base_filename=base_filename,
         config=full_config,
         embeddings_filenames=embeddings_filenames,
-        use_annoy=use_annoy,
+        vector_backend=index_backend,
         annoy_filenames=annoy_filenames,
+        faiss_filenames=faiss_filenames,
         windows=windows,
         offsets=offsets,
         tokens_filename=tokens_filename,
@@ -622,11 +659,11 @@ def ask_for_pdf_file():
     help="Number of results (neighbors) to retrieve per file for queries",
 )
 @click.option(
-    "--annoy",
-    is_flag=True,
-    default=True,
+    "--index-backend",
+    type=click.Choice(["faiss", "annoy", "exact"], case_sensitive=False),
+    default="faiss",
     show_default=True,
-    help="Use approximate kNN via Annoy for queries (faster querying at a slight cost of accuracy); if false, use exact exhaustive kNN",
+    help="Vector index backend to use for retrieval (faiss, annoy, or exact).",
 )
 @click.option(
     "--num-annoy-trees",
@@ -747,7 +784,7 @@ def main(
     encoding=DEFAULT_ENCODING,
     num_annoy_trees=100,
     num_results=10,
-    annoy=True,
+    index_backend="faiss",
     svm=False,
     svm_c=1.0,
     explain_split_count=9,
@@ -804,6 +841,11 @@ def main(
         print("Opening Semantra with no files")
 
     processed_windows = list(process_windows(windows))
+    vector_backend = index_backend.lower()
+    if vector_backend not in {"faiss", "annoy", "exact"}:
+        raise ValueError("index-backend must be one of 'faiss', 'annoy', or 'exact'")
+    use_annoy_backend = vector_backend == "annoy"
+    use_faiss_backend = vector_backend == "faiss"
 
     if transformer_model is not None:
         # Handle custom transformers model
@@ -844,7 +886,7 @@ def main(
             semantra_dir=semantra_dir,
             model=model,
             num_dimensions=model.get_num_dimensions(),
-            use_annoy=annoy,
+            index_backend=vector_backend,
             num_annoy_trees=num_annoy_trees,
             windows=processed_windows,
             cost_per_token=cost_per_token,
@@ -983,7 +1025,7 @@ def main(
                         semantra_dir=semantra_dir,
                         model=model,
                         num_dimensions=model.get_num_dimensions(),
-                        use_annoy=annoy,
+                        index_backend=vector_backend,
                         num_annoy_trees=num_annoy_trees,
                         windows=processed_windows,
                         cost_per_token=cost_per_token,
@@ -1080,9 +1122,12 @@ def main(
         if svm:
             svm_results = querysvm_by_queries_and_preferences(queries, preferences)
             return svm_results
-        if annoy:
+        if use_annoy_backend:
             ann_results = queryann_by_queries_and_preferences(queries, preferences)
             return ann_results
+        if use_faiss_backend:
+            faiss_results = queryfaiss_by_queries_and_preferences(queries, preferences)
+            return faiss_results
 
         # Get combined query and preference embedding
         embedding = model.embed_queries_and_preferences(queries, preferences, documents)
@@ -1190,6 +1235,8 @@ def main(
 
         results = []
         for doc in documents.values():
+            if not doc.use_annoy:
+                continue
             embedding_db = doc.embedding_db
             text_chunks = doc.text_chunks
             offsets = doc.offsets[0]
@@ -1213,6 +1260,49 @@ def main(
                 )
             sub_results = rerank_sub_results(queries, sub_results)
             results.append([doc.filename, sub_results])
+        return sort_results(results, True)
+
+    def queryfaiss_by_queries_and_preferences(queries, preferences):
+        import faiss  # type: ignore
+
+        embedding = model.embed_queries_and_preferences(queries, preferences, documents)
+        if embedding is None:
+            return sort_results([], True)
+
+        query_vec = np.array([embedding], dtype="float32")
+        norms = np.linalg.norm(query_vec, axis=1)
+        if np.any(norms == 0):
+            return sort_results([], True)
+        faiss.normalize_L2(query_vec)
+
+        results = []
+        for doc in documents.values():
+            if not doc.use_faiss:
+                continue
+            index = doc.faiss_index
+            text_chunks = doc.text_chunks
+            offsets = doc.offsets[0]
+            distances, indices = index.search(query_vec, num_results)
+            sub_results = []
+            for idx, distance in zip(indices[0], distances[0]):
+                if idx < 0 or idx >= len(offsets):
+                    continue
+                offset = offsets[idx]
+                text = join_text_chunks(text_chunks[offset[0] : offset[1]])
+                sub_results.append(
+                    {
+                        "text": text,
+                        "distance": float(distance),
+                        "offset": offset,
+                        "index": int(idx),
+                        "filename": doc.filename,
+                        "queries": queries,
+                        "preferences": preferences,
+                    }
+                )
+            sub_results = rerank_sub_results(queries, sub_results)
+            results.append([doc.filename, sub_results])
+
         return sort_results(results, True)
 
     @app.route("/api/explain", methods=["POST"])

@@ -99,16 +99,17 @@ def cli() -> None:
     help="Embedding windows configuration (matches Semantra CLI syntax).",
 )
 @click.option(
+    "--index-backend",
+    type=click.Choice(["faiss", "annoy", "exact"], case_sensitive=False),
+    default="faiss",
+    show_default=True,
+    help="Vector index backend to use for retrieval.",
+)
+@click.option(
     "--num-annoy-trees",
     type=int,
     default=100,
-    help="Number of trees for Annoy approximate nearest neighbour index.",
-)
-@click.option(
-    "--no-annoy",
-    is_flag=True,
-    default=False,
-    help="Disable Annoy and store embeddings only (exact search).",
+    help="Number of trees for Annoy approximate nearest neighbour index (when using Annoy).",
 )
 @click.option(
     "--test",
@@ -130,8 +131,8 @@ def index(
     force: bool,
     semantra_dir: Optional[Path],
     windows: str,
+    index_backend: str,
     num_annoy_trees: int,
-    no_annoy: bool,
     test: bool,
     jobs: int,
 ) -> None:
@@ -150,6 +151,9 @@ def index(
         raise click.ClickException(f"Unknown model preset '{model}'.") from exc
 
     embedding_model = model_config["get_model"]()
+    vector_backend = index_backend.lower()
+    if vector_backend not in {"faiss", "annoy", "exact"}:
+        raise click.ClickException("index-backend must be one of faiss, annoy, or exact")
     pool_size = model_config.get("pool_size")
     pool_count = model_config.get("pool_count")
     cost_per_token = model_config.get("cost_per_token")
@@ -177,7 +181,7 @@ def index(
 
     click.echo(
         f"Indexing {len(files)} files from {datasets_dir} "
-        f"using model '{model}' (semantra_dir={semantra_dir})."
+        f"using model '{model}' (backend={vector_backend}, semantra_dir={semantra_dir})."
     )
 
     def process_path(path: Path, silent: bool) -> None:
@@ -186,7 +190,7 @@ def index(
             semantra_dir=str(semantra_dir),
             model=embedding_model,
             num_dimensions=embedding_model.get_num_dimensions(),
-            use_annoy=not no_annoy,
+            index_backend=vector_backend,
             num_annoy_trees=num_annoy_trees,
             windows=processed_windows,
             cost_per_token=cost_per_token,
@@ -270,6 +274,19 @@ def index(
     default="1024_0_16",
     help="Embedding windows configuration (matches Semantra CLI syntax).",
 )
+@click.option(
+    "--index-backend",
+    type=click.Choice(["faiss", "annoy", "exact"], case_sensitive=False),
+    default="faiss",
+    show_default=True,
+    help="Vector index backend to use when serving results.",
+)
+@click.option(
+    "--num-annoy-trees",
+    type=int,
+    default=100,
+    help="Number of trees for Annoy approximate nearest neighbour index (when using Annoy).",
+)
 def start(
     datasets_dir: Path,
     host: str,
@@ -278,6 +295,8 @@ def start(
     model: str,
     semantra_dir: Path,
     windows: str,
+    index_backend: str,
+    num_annoy_trees: int,
 ) -> None:
     """Launch the Semantra server using existing indexes only."""
     files = resolve_files(datasets_dir)
@@ -293,6 +312,7 @@ def start(
         HASH_LENGTH,
         file_md5,
         get_annoy_filename,
+        get_faiss_filename,
         get_embeddings_filename,
         get_config_filename,
         get_tokens_filename,
@@ -311,8 +331,11 @@ def start(
         HASH_LENGTH
     )
     processed_windows = list(sem.process_windows(windows))
-    use_annoy = True
-    num_annoy_trees = 100
+    vector_backend = index_backend.lower()
+    if vector_backend not in {"faiss", "annoy", "exact"}:
+        raise click.ClickException("index-backend must be one of faiss, annoy, or exact")
+    use_annoy = vector_backend == "annoy"
+    use_faiss = vector_backend == "faiss"
 
     indexed_files: list[Path] = []
     missing = set()
@@ -337,6 +360,13 @@ def start(
                 if not annoy_path.exists():
                     missing.add(path)
                     break
+            if use_faiss:
+                faiss_path = semantra_dir / get_faiss_filename(
+                    md5, config_hash, size, offset, rewind
+                )
+                if not faiss_path.exists():
+                    missing.add(path)
+                    break
         else:
             indexed_files.append(path)
 
@@ -359,7 +389,7 @@ def start(
         )
 
     click.echo(
-        f"Starting Semantra server on {host}:{port} with {len(indexed_files)} files..."
+        f"Starting Semantra server on {host}:{port} with {len(indexed_files)} files (backend={vector_backend})..."
     )
 
     cli_args = [
@@ -373,9 +403,13 @@ def start(
         model,
         "--windows",
         windows,
+        "--index-backend",
+        vector_backend,
         "--semantra-dir",
         str(semantra_dir),
     ]
+    if use_annoy:
+        cli_args.extend(["--num-annoy-trees", str(num_annoy_trees)])
     cli_args.extend(str(path) for path in indexed_files)
 
     try:

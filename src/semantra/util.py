@@ -57,6 +57,10 @@ def get_annoy_filename(md5, config_hash, size, offset, rewind, num_trees):
     return f"{md5}.{config_hash}.{size}_{offset}_{rewind}.{num_trees}t.annoy"
 
 
+def get_faiss_filename(md5, config_hash, size, offset, rewind):
+    return f"{md5}.{config_hash}.{size}_{offset}_{rewind}.faiss"
+
+
 def get_config_filename(md5, config_hash):
     return f"{md5}.{config_hash}.config.json"
 
@@ -98,6 +102,30 @@ def load_annoy_db(filename, num_dimensions):
     db = AnnoyIndex(num_dimensions, "angular")
     db.load(filename)
     return db
+
+
+def write_faiss_index(filename, embeddings):
+    import faiss  # type: ignore
+
+    embeddings = np.array(embeddings, dtype="float32", copy=True)
+    if embeddings.ndim != 2:
+        raise ValueError("Embeddings must be a 2D array to build a Faiss index")
+    faiss.normalize_L2(embeddings)
+    index = faiss.IndexFlatIP(embeddings.shape[1])
+    index.add(embeddings)
+    faiss.write_index(index, filename)
+    return index
+
+
+def load_faiss_index(filename):
+    import faiss  # type: ignore
+
+    index = faiss.read_index(filename)
+    return index
+
+
+def get_num_faiss_embeddings(filename):
+    return load_faiss_index(filename).ntotal
 
 
 def get_num_annoy_embeddings(annoy_filename, num_dimensions):

@@ -45,8 +45,6 @@ from .util import (
     write_faiss_index,
     write_embedding,
 )
-from PyQt5.QtWidgets import QApplication, QFileDialog
-
 VERSION = pkg_resources.require("semantra")[0].version
 DEFAULT_ENCODING = "utf-8"
 DEFAULT_PORT = 5000
@@ -693,19 +691,6 @@ def process_windows(windows: str) -> "list[tuple[int, int, int]]":
             yield int(window), 0, 0
 
 
-def ask_for_pdf_file():
-    app = QApplication(sys.argv)
-    pdf_path, _ = QFileDialog.getOpenFileName(
-        None, "Select a PDF file", "", "PDF Files (*.pdf)"
-    )
-
-    if not pdf_path:
-        print("Error: No file selected.")
-        sys.exit(1)
-    app.quit()
-    return (os.path.relpath(pdf_path),)
-
-
 @click.command()
 @click.argument("filename", type=click.Path(exists=True), nargs=-1)
 @click.option(
@@ -899,14 +884,6 @@ def ask_for_pdf_file():
     help="Where to save the results of the direct search using --search <QUERY>",
 )
 
-@click.option(
-    "-show-dialog",
-    is_flag=True,
-    default=False,
-    help="Show file dialog to select a file when no files are specified.",
-)
-
-
 def main(
     filename,
     windows="1024_0_16",
@@ -939,7 +916,6 @@ def main(
     semantra_dir=None,  # auto
     search=None,
     save_search_to=None,
-    show_dialog=False,
 ):
     if version:
         print(VERSION)
@@ -962,18 +938,8 @@ def main(
 
     # Default to empty files list
     if filename is None or len(filename) == 0:
-        # Show file dialog only if explicitly requested
-        if show_dialog:
-            try:
-                filename = ask_for_pdf_file()
-            except Exception as e:
-                print(e)
-                # Fall back to starting with no files instead of error
-                print("Starting Semantra with no files loaded.")
-                filename = ()
-        else:
-            print("Starting Semantra with no files loaded.")
-            filename = ()  # Empty tuple
+        print("Starting Semantra with no files loaded.")
+        filename = ()  # Empty tuple
 
     if filename and len(filename) > 0:
         print(f"Opening Semantra with {filename}")

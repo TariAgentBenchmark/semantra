@@ -27,7 +27,6 @@ dependencies = [
   "transformers>=4.27.4",
   "setuptools",
   "flask-cors>=6.0.1",
-  "pyqt5>=5.15.11",
   "docling>=2.60.0",
 ]
 description = "A semantic search CLI tool"

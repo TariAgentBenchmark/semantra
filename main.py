@@ -72,7 +72,7 @@ def cli() -> None:
     "--model",
     type=str,
     default="mpnet",
-    help="Preset embedding model to use (must exist in semantra.models).",
+    help="Preset embedding model or Hugging Face identifier to use.",
 )
 @click.option(
     "--encoding",
@@ -152,10 +152,7 @@ def index(
     semantra_dir = semantra_dir or Path(click.get_app_dir("Semantra"))
     semantra_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        model_config = sem.models[model]
-    except KeyError as exc:
-        raise click.ClickException(f"Unknown model preset '{model}'.") from exc
+    model_config = sem.resolve_model(model)
 
     embedding_model = model_config["get_model"]()
     vector_backend = index_backend.lower()
@@ -269,7 +266,7 @@ def index(
     "--model",
     type=str,
     default="mpnet",
-    help="Preset embedding model to use (must exist in semantra.models).",
+    help="Preset embedding model or Hugging Face identifier to use.",
 )
 @click.option(
     "--semantra-dir",
@@ -335,11 +332,7 @@ def start(
         get_tokens_filename,
     )
 
-    try:
-        model_config = sem.models[model]
-    except KeyError as exc:
-        raise click.ClickException(f"Unknown model preset '{model}'.") from exc
-
+    model_config = sem.resolve_model(model)
     embedding_model = model_config["get_model"]()
     config = embedding_model.get_config()
     if encoding != sem.DEFAULT_ENCODING:

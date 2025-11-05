@@ -175,7 +175,7 @@ semantra [OPTIONS] [FILENAME(S)]...
 
 ## Options
 
-- `--model [openai|minilm|mpnet|sgpt|sgpt-1.3B]`: Preset model to use for embedding. See [the models guide](docs/guide_models.md) for more info (default: mpnet)
+- `--model [openai|minilm|mpnet|sgpt|sgpt-1.3B|HUGGINGFACE_ID]`: Preset model to use for embedding (default: mpnet). You can also pass any Hugging Face identifier (e.g. `Qwen/Qwen3-Embedding-8B`) to load it directly.
 - `--transformer-model TEXT`: Custom Huggingface transformers model name to use for embedding (only one of `--model` and `--transformer-model` should be specified). See [the models guide](docs/guide_models.md) for more info
 - `--windows TEXT`: Embedding windows to extract. A comma-separated list of the format "size[\_offset=0][_rewind=0]. A window with size 1024, offset 0, and rewind of 16 (1024_0_16) will embed the document in chunks of roughly 1024 tokens which partially overlap by 16. Only the first window is used for search. See the [windows concept doc](docs/concept_windows.md) for more information (default: 1024_0_16)
 - `--encoding`: Encoding to use for reading text files [default: utf-8]

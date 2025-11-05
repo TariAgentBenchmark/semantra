@@ -20,7 +20,7 @@ from flask import Flask, jsonify, make_response, request, send_file, send_from_d
 from flask_cors import CORS
 from tqdm import tqdm
 
-from .models import BaseModel, TransformerModel, as_numpy, models
+from .models import BaseModel, TransformerModel, as_numpy, models, resolve_model
 from .pdf import get_pdf_content
 from .util import (
     HASH_LENGTH,
@@ -710,10 +710,10 @@ def ask_for_pdf_file():
 @click.argument("filename", type=click.Path(exists=True), nargs=-1)
 @click.option(
     "--model",
-    type=click.Choice(models.keys(), case_sensitive=True),
+    type=str,
     default="mpnet",
     show_default=True,
-    help="Preset model to use for embedding",
+    help="Preset model name or Hugging Face identifier for embedding",
 )
 @click.option(
     "--encoding",
@@ -1002,7 +1002,7 @@ def main(
         )
     else:
         # Pull preset model
-        model_config = models[model]
+        model_config = resolve_model(model)
         cost_per_token = model_config["cost_per_token"]
         if pool_size is None:
             pool_size = model_config["pool_size"]

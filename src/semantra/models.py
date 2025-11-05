@@ -414,3 +414,17 @@ models = {
         ),
     },
 }
+
+
+def resolve_model(name: str):
+    """Return a model configuration, treating unknown names as HF identifiers."""
+    config = models.get(name)
+    if config is not None:
+        return config
+
+    fallback_pool_size = models.get("mpnet", {}).get("pool_size", 15000)
+    return {
+        "cost_per_token": None,
+        "pool_size": fallback_pool_size,
+        "get_model": lambda model_name=name: TransformerModel(model_name=model_name),
+    }

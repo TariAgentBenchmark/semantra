@@ -138,7 +138,11 @@ def get_rerank_settings():
     if not model_name or not api_key:
         return None
 
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com")
+    base_url = os.getenv("OPENAI_RERANKING_BASE_URL") or os.getenv(
+        "OPENAI_BASE_URL"
+    )
+    if not base_url:
+        base_url = "https://api.openai.com"
     trimmed = base_url.rstrip("/")
     if trimmed.endswith("/v1"):
         endpoint = f"{trimmed}/rerank"

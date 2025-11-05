@@ -138,15 +138,19 @@ Adjust the paths, model, or backend flags as needed; once `start` reports succes
 Both `semantra.py` and `main.py` load configuration from a `.env` file if present. Copy `.env.example` to `.env` and fill in the credentials for your embedding provider. An OpenAI-compatible setup might look like this:
 
 ```ini
-OPENAI_BASE_URL=https://api.siliconflow.cn/v1
+OPENAI_LLM_BASE_URL=https://api.siliconflow.cn/v1
+OPENAI_EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
+OPENAI_RERANKING_BASE_URL=https://api.siliconflow.cn/v1
 OPENAI_API_KEY=your_api_key_here
 OPENAI_MODEL_NAME=deepseek-ai/DeepSeek-V3.2-Exp
 OPENAI_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
 # OPENAI_EMBEDDING_DIMENSIONS=8192
 OPENAI_RERANKING_MODEL=Qwen/Qwen3-Reranker-8B
+# OPENAI_BASE_URL=https://api.siliconflow.cn/v1
 ```
 
-- `OPENAI_BASE_URL` / `OPENAI_API_KEY` point at the service providing your embeddings.
+- `OPENAI_LLM_BASE_URL`, `OPENAI_EMBEDDING_BASE_URL`, and `OPENAI_RERANKING_BASE_URL` let you point each part of the stack at different OpenAI-compatible services. If they all live at the same origin you can set them to the same value, or define `OPENAI_BASE_URL` as a shared fallback.
+- `OPENAI_API_KEY` is reused for each service. Override it per service via client-specific environment variables if necessary.
 - `OPENAI_MODEL_NAME` is the model used for query embeddings inside the app UI.
 - `OPENAI_EMBEDDING_MODEL` controls indexing-time embeddings when you run `main.py index` or `semantra.py`.
 - Optionally set `OPENAI_EMBEDDING_DIMENSIONS` if the service requires an explicit width.

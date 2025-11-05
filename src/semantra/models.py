@@ -117,7 +117,9 @@ class OpenAIModel(BaseModel):
             )
         
         # Set custom base URL if provided (for OpenAI-compatible APIs)
-        base_url = os.getenv("OPENAI_BASE_URL")
+        base_url = os.getenv("OPENAI_EMBEDDING_BASE_URL") or os.getenv(
+            "OPENAI_BASE_URL"
+        )
 
         client_kwargs = {"api_key": api_key}
         if base_url:

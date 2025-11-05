@@ -132,6 +132,7 @@ When working inside this repository you can drive Semantra through the lightweig
    ```
 
 Adjust the paths, model, or backend flags as needed; once `start` reports success, open `http://localhost:5001` to browse your indexed documents.
+If the datasets directory is empty (or missing) the server still boots and shows an empty library so you can upload documents from the UI.
 
 ### Environment configuration
 

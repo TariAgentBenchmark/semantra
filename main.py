@@ -275,7 +275,7 @@ def index(
     "--semantra-dir",
     type=click.Path(file_okay=False, path_type=Path),
     required=True,
-    help="Directory containing pre-built Semantra indexes (required).",
+    help="Directory where Semantra stores its cache (created if missing).",
 )
 @click.option(
     "--windows",
@@ -307,14 +307,22 @@ def start(
     index_backend: str,
     num_annoy_trees: int,
 ) -> None:
-    """Launch the Semantra server using existing indexes only."""
-    files = resolve_files(datasets_dir)
-    semantra_dir = semantra_dir.expanduser().resolve()
-    if not semantra_dir.exists():
-        raise click.ClickException(
-            f"Semantra cache directory '{semantra_dir}' does not exist. "
-            "Run the index command first."
+    """Launch the Semantra server, serving cached files and allowing uploads."""
+    datasets_dir = datasets_dir.expanduser().resolve()
+    files: list[Path] = []
+    if datasets_dir.exists():
+        files = list(iter_dataset_files(datasets_dir))
+        if not files:
+            click.echo(
+                f"No supported files found in {datasets_dir}. Starting with an empty library."
+            )
+    else:
+        click.echo(
+            f"Datasets directory {datasets_dir} does not exist; starting with an empty library."
         )
+
+    semantra_dir = semantra_dir.expanduser().resolve()
+    semantra_dir.mkdir(parents=True, exist_ok=True)
 
     from semantra import semantra as sem
     from semantra.util import (
@@ -379,7 +387,7 @@ def start(
         else:
             indexed_files.append(path)
 
-    if not indexed_files:
+    if files and not indexed_files:
         missing_list = "\n".join(f"- {path}" for path in list(missing)[:10])
         more = "" if len(missing) <= 10 else f"\n...and {len(missing) - 10} more."
         raise click.ClickException(

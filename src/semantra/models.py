@@ -216,11 +216,24 @@ class TransformerModel(BaseModel):
         asymmetric=False,
         cuda=None,
     ):
-        if cuda is None:
-            cuda = torch.cuda.is_available()
         self.model_name = model_name
+
+        if cuda is True and torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif cuda is False:
+            device = torch.device("cpu")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
+
+        self.device = device
+
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModel.from_pretrained(model_name)
+        self.model.to(self.device)
 
         # Get tokens
         self.pre_post_tokens = [
@@ -252,9 +265,8 @@ class TransformerModel(BaseModel):
 
         self.asymmetric = asymmetric
 
-        self.cuda = cuda
-        if self.cuda:
-            self.model = self.model.cuda()
+        # Maintain backward-compatible flag for downstream checks
+        self.cuda = self.device.type == "cuda"
 
     def get_config(self):
         return {
@@ -358,9 +370,8 @@ class TransformerModel(BaseModel):
             batch_first=True,
             padding_value=0,
         )
-        if self.cuda:
-            input_ids = input_ids.cuda()
-            attention_mask = attention_mask.cuda()
+        input_ids = input_ids.to(self.device)
+        attention_mask = attention_mask.to(self.device)
         with torch.no_grad():
             model_output = self.model(
                 input_ids=input_ids, attention_mask=attention_mask
